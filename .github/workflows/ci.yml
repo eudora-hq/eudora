@@ -1,0 +1,59 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  test:
+    name: Test & Lint
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+          cache-dependency-path: server/package-lock.json
+
+      - name: Debug environment
+        run: |
+          node --version
+          npm --version
+          python3 --version
+          which python3
+
+      - name: Install native build tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y python3 make g++
+
+      - name: Install server dependencies
+        run: cd server && npm ci
+
+      - name: Rebuild better-sqlite3
+        run: cd server && npm rebuild better-sqlite3
+
+      - name: Verify better-sqlite3 native binding
+        working-directory: server
+        run: node -e "require('better-sqlite3')(':memory:').close(); console.log('better-sqlite3 OK')"
+
+      - name: Run tests
+        working-directory: server
+        run: npm run test
+        env:
+          NODE_ENV: test
+          SELF_HOSTED: false
+          JWT_SECRET: test-jwt-secret-32-chars-minimum!!
+          ENCRYPTION_KEY: 0000000000000000000000000000000000000000000000000000000000000000
+          DB_PATH: ':memory:'
+
+      - name: Run lint
+        working-directory: server
+        run: npm run lint

@@ -1,0 +1,85 @@
+@import "tailwindcss";
+
+@theme {
+  --color-bg: #050505;
+  --color-surface: #0a0a0a;
+  --color-surface-high: #141414;
+  --color-primary: #10b981;
+  --color-on-primary: #050505;
+  --color-text-muted: #a3a3a3;
+  --color-border-dim: #1a1a1a;
+  --color-warning: #f59e0b;
+  --color-danger: #ef4444;
+
+  --font-mono: "JetBrains Mono", monospace;
+  --font-sans: "Inter", sans-serif;
+
+  --radius-DEFAULT: 0px;
+  --radius-none: 0px;
+  --radius-sm: 0px;
+  --radius-md: 0px;
+  --radius-lg: 0px;
+  --radius-xl: 0px;
+  --radius-2xl: 0px;
+  --radius-3xl: 0px;
+  --radius-full: 0px;
+
+  --spacing-sidebar: 256px;
+  --spacing-header: 64px;
+}
+
+.material-symbols-outlined {
+  font-variation-settings: 'FILL' 0, 'wght' 400, 'GRAD' 0, 'opsz' 24;
+}
+
+::-webkit-scrollbar { width: 4px; }
+::-webkit-scrollbar-track { background: #050505; }
+::-webkit-scrollbar-thumb { background: #262626; }
+::-webkit-scrollbar-thumb:hover { background: #10b981; }
+
+.terminal-grid {
+  background-image: radial-gradient(circle, rgba(16,185,129,0.05) 1px, transparent 1px);
+  background-size: 24px 24px;
+}
+
+.scan-line {
+  position: absolute; top: 0; left: 0;
+  width: 100%; height: 2px;
+  background: rgba(16, 185, 129, 0.5);
+  box-shadow: 0 0 10px rgba(16, 185, 129, 0.6);
+  opacity: 0; pointer-events: none;
+}
+
+.primary-btn:hover .scan-line {
+  animation: scan 1.5s linear infinite;
+  opacity: 1;
+}
+
+@keyframes scan { 
+  0% { top: 0; } 
+  100% { top: 100%; } 
+}
+
+@keyframes pulse {
+  0%, 100% { opacity: 1; transform: scale(1); }
+  50% { opacity: 0.4; transform: scale(1.2); }
+}
+
+@keyframes blink {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0; }
+}
+
+@keyframes fadeIn {
+  from { opacity: 0; transform: translateY(4px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+@keyframes stream {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+.pulse-dot { animation: pulse 2s cubic-bezier(0.4, 0, 0.6, 1) infinite; }
+.cursor-blink { animation: blink 1s step-end infinite; }
+.fade-in { animation: fadeIn 0.3s ease forwards; }

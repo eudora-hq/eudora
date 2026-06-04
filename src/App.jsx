@@ -1,0 +1,76 @@
+import { BrowserRouter, Routes, Route, Navigate, useLocation } from 'react-router-dom'
+import { useAuthStore } from './store/authStore'
+import { useSelfHosted } from './hooks/useSelfHosted'
+import Login from './pages/Login'
+import Onboarding from './pages/Onboarding'
+import AgentBuilder from './pages/AgentBuilder'
+import Chat from './pages/Chat'
+import Layout from './components/Layout'
+import ContextManager from './pages/ContextManager'
+import AuditLog from './pages/AuditLog'
+import Settings from './pages/Settings'
+import Dashboard from './pages/Dashboard'
+import WorkflowCanvas from './pages/WorkflowCanvas'
+import CronJobs from './pages/CronJobs'
+import TrialExpired from './pages/TrialExpired'
+import BillingSuccess from './pages/BillingSuccess'
+import Templates from './pages/Templates'
+
+function ProtectedRoute({ children }) {
+  const { isAuthenticated, user } = useAuthStore()
+  const location = useLocation()
+  const isSelfHosted = useSelfHosted()
+
+  if (!isAuthenticated) return <Navigate to="/login" replace />
+
+  const isTrialExpired = user?.plan === 'trial' &&
+    user?.trial_ends_at &&
+    Date.now() > user.trial_ends_at &&
+    !isSelfHosted
+
+  if (
+    isTrialExpired &&
+    location.pathname !== '/billing/expired' &&
+    location.pathname !== '/billing'
+  ) {
+    return <Navigate to="/billing/expired" replace />
+  }
+
+  if (user && !user.onboardingCompleted && location.pathname !== '/billing/expired') {
+    return <Navigate to="/onboarding" replace />
+  }
+  return children
+}
+
+function AuthRoute({ children }) {
+  const { isAuthenticated } = useAuthStore()
+  if (isAuthenticated) return <Navigate to="/agents" replace />
+  return children
+}
+
+export default function App() {
+  return (
+    <BrowserRouter>
+      <Routes>
+        <Route path="/login" element={<AuthRoute><Login /></AuthRoute>} />
+        <Route path="/onboarding" element={<Onboarding />} />
+        <Route path="/billing/success" element={<BillingSuccess />} />
+        <Route path="/billing/expired" element={<ProtectedRoute><TrialExpired /></ProtectedRoute>} />
+        <Route path="/" element={<ProtectedRoute><Layout /></ProtectedRoute>}>
+          <Route index element={<Navigate to="/agents" replace />} />
+          <Route path="agents" element={<AgentBuilder />} />
+          <Route path="templates" element={<Templates />} />
+          <Route path="agents/:id/context" element={<ContextManager />} />
+          <Route path="chat" element={<Chat />} />
+          <Route path="audit" element={<AuditLog />} />
+          <Route path="settings" element={<Settings />} />
+          <Route path="dashboard" element={<Dashboard />} />
+          <Route path="workflows" element={<WorkflowCanvas />} />
+          <Route path="workflows/:id" element={<WorkflowCanvas />} />
+          <Route path="cron" element={<CronJobs />} />
+        </Route>
+        <Route path="*" element={<Navigate to="/login" replace />} />
+      </Routes>
+    </BrowserRouter>
+  )
+}

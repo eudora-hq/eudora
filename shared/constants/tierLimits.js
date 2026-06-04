@@ -1,0 +1,70 @@
+export const TIER_LIMITS = {
+  trial: {
+    agents:               Infinity,
+    messages_per_day:     500,
+    cron_jobs:            3,
+    workflows:            0,
+    context_files:        50,
+    audit_retention_days: 30,
+    seats:                1,
+    requests_per_minute:  60,
+  },
+  solo: {
+    agents:               Infinity,
+    messages_per_day:     500,
+    cron_jobs:            5,
+    workflows:            0,
+    context_files:        50,
+    audit_retention_days: 30,
+    seats:                1,
+    requests_per_minute:  60,
+  },
+  team: {
+    agents:               Infinity,
+    messages_per_day:     2000,
+    cron_jobs:            20,
+    workflows:            5,
+    context_files:        200,
+    audit_retention_days: 90,
+    seats:                10,
+    requests_per_minute:  200,
+  },
+  pro: {
+    agents:               Infinity,
+    messages_per_day:     Infinity,
+    cron_jobs:            Infinity,
+    workflows:            Infinity,
+    context_files:        Infinity,
+    audit_retention_days: 365,
+    seats:                Infinity,
+    requests_per_minute:  1000,
+  },
+  enterprise: {
+    agents:               Infinity,
+    messages_per_day:     Infinity,
+    cron_jobs:            Infinity,
+    workflows:            Infinity,
+    context_files:        Infinity,
+    audit_retention_days: Infinity,
+    seats:                Infinity,
+    requests_per_minute:  Infinity,
+  },
+}
+
+export const FEATURES = {
+  WORKFLOW_BUILDER:   'workflow_builder',
+  AUDIT_EXPORT:       'audit_export',
+  AUDIT_VIEW:         'audit_view',
+  TEAM_MEMBERS:       'team_members',
+  CRON_JOBS:          'cron_jobs',
+  SSO:                'sso',
+  CUSTOM_GUARD_RULES: 'custom_guard_rules',
+}
+
+export const FEATURES_BY_PLAN = {
+  trial:      ['audit_view', 'cron_jobs'],
+  solo:       ['audit_view', 'cron_jobs'],
+  team:       ['audit_view', 'cron_jobs', 'workflow_builder', 'team_members'],
+  pro:        ['audit_view', 'cron_jobs', 'workflow_builder', 'team_members', 'audit_export', 'custom_guard_rules'],
+  enterprise: ['audit_view', 'cron_jobs', 'workflow_builder', 'team_members', 'audit_export', 'custom_guard_rules', 'sso'],
+}

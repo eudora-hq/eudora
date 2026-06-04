@@ -1,0 +1,259 @@
+import { nanoid } from 'nanoid'
+import {
+  hashPassword,
+  verifyPassword,
+  generateAccessToken,
+  generateRefreshToken,
+  hashRefreshToken,
+} from '../utils/auth.js'
+import authenticate from '../middleware/auth.js'
+import { seedFeatureFlags } from '../billing/canAccess.js'
+import { createState, validateState } from '../utils/oauthState.js'
+import { encrypt } from '../utils/encryption.js'
+
+function isValidEmail(email) {
+  return typeof email === 'string' && /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)
+}
+
+export default async function authRoutes(fastify) {
+  const db = fastify.db
+
+  fastify.post('/auth/register', async (request, reply) => {
+    const { name, email, password } = request.body || {}
+
+    if (!name || typeof name !== 'string' || name.trim() === '') {
+      return reply.code(400).send({ error: 'validation_error', details: 'name is required' })
+    }
+    if (!isValidEmail(email)) {
+      return reply.code(400).send({ error: 'validation_error', details: 'valid email is required' })
+    }
+    if (!password || password.length < 8) {
+      return reply.code(400).send({ error: 'validation_error', details: 'password must be at least 8 characters' })
+    }
+
+    const existing = db.prepare('SELECT id FROM users WHERE email = ?').get(email)
+    if (existing) {
+      return reply.code(409).send({ error: 'email_already_registered' })
+    }
+
+    const tenantId = nanoid()
+    db.prepare(
+      'INSERT INTO tenants (id, name, plan, trial_ends_at, created_at) VALUES (?, ?, ?, ?, ?)'
+    ).run(tenantId, name.trim(), 'trial', Date.now() + 14 * 24 * 60 * 60 * 1000, Date.now())
+
+    const passwordHash = await hashPassword(password)
+    const userId = nanoid()
+    db.prepare(
+      'INSERT INTO users (id, tenant_id, email, password_hash, role, onboarding_completed) VALUES (?, ?, ?, ?, ?, ?)'
+    ).run(userId, tenantId, email, passwordHash, 'owner', 0)
+
+    seedFeatureFlags(db, tenantId, 'trial')
+
+    return reply.code(201).send({ tenantId, userId, email })
+  })
+
+  fastify.post('/auth/login', async (request, reply) => {
+    const { email, password } = request.body || {}
+
+    const user = db.prepare('SELECT * FROM users WHERE email = ?').get(email)
+    if (!user) {
+      return reply.code(401).send({ error: 'invalid_credentials' })
+    }
+
+    const valid = await verifyPassword(password || '', user.password_hash)
+    if (!valid) {
+      return reply.code(401).send({ error: 'invalid_credentials' })
+    }
+
+    db.prepare('UPDATE users SET last_login = ? WHERE id = ?').run(Date.now(), user.id)
+    const tenant = db.prepare('SELECT plan, trial_ends_at FROM tenants WHERE id = ?').get(user.tenant_id)
+
+    const accessToken = generateAccessToken({
+      userId: user.id,
+      tenantId: user.tenant_id,
+      role: user.role,
+    })
+    const { raw, hashed } = generateRefreshToken()
+    db.prepare(
+      'INSERT INTO refresh_tokens (id, user_id, token_hash, expires_at, created_at) VALUES (?, ?, ?, ?, ?)'
+    ).run(nanoid(), user.id, hashed, Date.now() + 7 * 24 * 60 * 60 * 1000, Date.now())
+
+    return reply.code(200).send({
+      accessToken,
+      refreshToken: raw,
+      user: {
+        id: user.id,
+        email: user.email,
+        role: user.role,
+        plan: tenant?.plan || 'trial',
+        trial_ends_at: tenant?.trial_ends_at ?? null,
+      },
+      onboardingCompleted: user.onboarding_completed === 1,
+    })
+  })
+
+  fastify.post('/auth/refresh', async (request, reply) => {
+    const { refreshToken } = request.body || {}
+
+    if (!refreshToken) {
+      return reply.code(401).send({ error: 'invalid_refresh_token' })
+    }
+
+    const hashed = hashRefreshToken(refreshToken)
+    const stored = db.prepare('SELECT * FROM refresh_tokens WHERE token_hash = ?').get(hashed)
+
+    if (!stored) {
+      return reply.code(401).send({ error: 'invalid_refresh_token' })
+    }
+
+    if (stored.expires_at <= Date.now()) {
+      return reply.code(401).send({ error: 'refresh_token_expired' })
+    }
+
+    db.prepare('DELETE FROM refresh_tokens WHERE id = ?').run(stored.id)
+
+    const user = db.prepare('SELECT * FROM users WHERE id = ?').get(stored.user_id)
+    const accessToken = generateAccessToken({
+      userId: user.id,
+      tenantId: user.tenant_id,
+      role: user.role,
+    })
+    const { raw: newRaw, hashed: newHashed } = generateRefreshToken()
+    db.prepare(
+      'INSERT INTO refresh_tokens (id, user_id, token_hash, expires_at, created_at) VALUES (?, ?, ?, ?, ?)'
+    ).run(nanoid(), user.id, newHashed, Date.now() + 7 * 24 * 60 * 60 * 1000, Date.now())
+
+    return reply.code(200).send({ accessToken, refreshToken: newRaw })
+  })
+
+  fastify.post('/auth/logout', async (request, reply) => {
+    const { refreshToken } = request.body || {}
+    if (refreshToken) {
+      db.prepare('DELETE FROM refresh_tokens WHERE token_hash = ?').run(hashRefreshToken(refreshToken))
+    }
+    return reply.code(200).send({ success: true })
+  })
+
+  fastify.patch('/users/me', { preHandler: authenticate }, async (request, reply) => {
+    const { onboarding_completed, name } = request.body || {}
+    const { userId } = request.user
+
+    if (onboarding_completed !== undefined) {
+      db.prepare('UPDATE users SET onboarding_completed = ? WHERE id = ?').run(
+        onboarding_completed ? 1 : 0,
+        userId
+      )
+    }
+    if (typeof name === 'string' && name.trim()) {
+      db.prepare('UPDATE tenants SET name = ? WHERE id = ?').run(name.trim(), request.tenantId)
+    }
+
+    return reply.code(200).send({ success: true })
+  })
+
+  // GET /auth/oauth/openai — initiate OAuth flow (requires auth via global middleware)
+  fastify.get('/auth/oauth/openai', async (request, reply) => {
+    const clientId = process.env.OPENAI_OAUTH_CLIENT_ID
+    if (!clientId) {
+      return reply.code(503).send({ error: 'oauth_not_configured' })
+    }
+
+    const randomState = createState()
+    const fullState = `${request.tenantId}:${randomState}`
+
+    const url = new URL('https://auth.openai.com/authorize')
+    url.searchParams.set('response_type', 'code')
+    url.searchParams.set('client_id', clientId)
+    url.searchParams.set('redirect_uri', process.env.OPENAI_OAUTH_REDIRECT_URI || '')
+    url.searchParams.set('scope', 'openai.model.request')
+    url.searchParams.set('state', fullState)
+
+    return reply.redirect(url.toString())
+  })
+
+  // GET /auth/oauth/callback/openai — handle OAuth redirect from OpenAI (public route)
+  fastify.get('/auth/oauth/callback/openai', async (request, reply) => {
+    const { code, state: fullState, error: oauthError } = request.query
+    const clientUrl = process.env.CLIENT_URL || 'http://localhost:5173'
+
+    if (oauthError) {
+      return reply.redirect(`${clientUrl}/settings/api-keys?error=oauth_denied`)
+    }
+
+    // Recover tenantId from encoded state: "{tenantId}:{randomState}"
+    const colonIdx = fullState ? fullState.indexOf(':') : -1
+    if (colonIdx === -1) {
+      return reply.code(400).send({ error: 'invalid_oauth_state' })
+    }
+    const tenantId = fullState.slice(0, colonIdx)
+    const randomState = fullState.slice(colonIdx + 1)
+
+    if (!validateState(randomState)) {
+      return reply.code(400).send({ error: 'invalid_oauth_state' })
+    }
+
+    // Exchange code for tokens
+    let tokenData
+    try {
+      const tokenRes = await fetch('https://auth.openai.com/oauth/token', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({
+          grant_type: 'authorization_code',
+          code,
+          redirect_uri: process.env.OPENAI_OAUTH_REDIRECT_URI,
+          client_id: process.env.OPENAI_OAUTH_CLIENT_ID,
+          client_secret: process.env.OPENAI_OAUTH_CLIENT_SECRET,
+        }),
+      })
+      if (!tokenRes.ok) throw new Error('Token exchange failed')
+      tokenData = await tokenRes.json()
+    } catch {
+      return reply.redirect(`${clientUrl}/settings/api-keys?error=oauth_failed`)
+    }
+
+    const { access_token, refresh_token, expires_in, scope } = tokenData
+    const { ciphertext: accessCt, iv: accessIv } = encrypt(access_token)
+    const { ciphertext: refreshCt, iv: refreshIv } = encrypt(refresh_token)
+    const oauthExpiresAt = Date.now() + expires_in * 1000
+
+    const owner = db
+      .prepare("SELECT id FROM users WHERE tenant_id = ? AND role = 'owner' LIMIT 1")
+      .get(tenantId)
+    const userId = owner?.id ?? null
+
+    const existing = db
+      .prepare("SELECT id FROM api_keys WHERE tenant_id = ? AND provider = 'openai_oauth' LIMIT 1")
+      .get(tenantId)
+
+    if (existing) {
+      db.prepare(`
+        UPDATE api_keys
+           SET oauth_access_token_encrypted = ?,
+               oauth_access_token_iv = ?,
+               oauth_refresh_token_encrypted = ?,
+               oauth_refresh_token_iv = ?,
+               oauth_expires_at = ?,
+               oauth_scope = ?
+         WHERE id = ?
+      `).run(accessCt, accessIv, refreshCt, refreshIv, oauthExpiresAt, scope ?? null, existing.id)
+    } else {
+      db.prepare(`
+        INSERT INTO api_keys
+          (id, tenant_id, user_id, provider, auth_type, label,
+           oauth_access_token_encrypted, oauth_access_token_iv,
+           oauth_refresh_token_encrypted, oauth_refresh_token_iv,
+           oauth_expires_at, oauth_scope, created_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `).run(
+        nanoid(), tenantId, userId,
+        'openai_oauth', 'oauth', 'ChatGPT Subscription',
+        accessCt, accessIv, refreshCt, refreshIv,
+        oauthExpiresAt, scope ?? null,
+        Date.now()
+      )
+    }
+
+    return reply.redirect(`${clientUrl}/settings/api-keys?connected=openai`)
+  })
+}

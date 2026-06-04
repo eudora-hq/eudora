@@ -1,0 +1,15 @@
+node_modules/
+.env
+*.db
+*.db-journal
+dist/
+.DS_Store
+coverage/
+.vite/
+*.env.example
+.claude/
+*.db-shm
+*.db-wal
+metadata.json
+project-tree.md
+node_modules/
