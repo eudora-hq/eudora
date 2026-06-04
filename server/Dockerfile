@@ -4,10 +4,14 @@ RUN apk add --no-cache python3 make g++
 
 WORKDIR /app
 
-COPY package*.json ./
+# Copy shared constants (outside server directory)
+COPY shared/ /shared/
+
+# Copy server files
+COPY server/package*.json ./
 RUN npm install
 
-COPY . .
+COPY server/ .
 
 EXPOSE 3001
 
