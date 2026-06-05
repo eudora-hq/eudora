@@ -16,7 +16,7 @@ test('workflows nav item on trial account shows upgrade message and lock', async
 
   await page.goto('/dashboard')
 
-  await expect(page.getByText(/available on team and pro plans/i)).toBeVisible()
+  await expect(page.getByText(/available on professional and enterprise plans/i)).toBeVisible()
   await expect(page.locator('aside').getByText('lock')).toBeVisible()
   await expectNoConsoleErrors(consoleErrors)
 })

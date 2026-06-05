@@ -137,7 +137,7 @@ describe('reports routes', () => {
   })
 
   it('non-enterprise tenant receives 403', async () => {
-    db.prepare('UPDATE tenants SET plan = ? WHERE id = ?').run('pro', tenantId)
+    db.prepare('UPDATE tenants SET plan = ? WHERE id = ?').run('professional', tenantId)
     const res = await generateReport()
 
     expect(res.statusCode).toBe(403)
@@ -146,7 +146,7 @@ describe('reports routes', () => {
 
   it('SELF_HOSTED tenant can generate report regardless of plan', async () => {
     process.env.SELF_HOSTED = 'true'
-    db.prepare('UPDATE tenants SET plan = ? WHERE id = ?').run('solo', tenantId)
+    db.prepare('UPDATE tenants SET plan = ? WHERE id = ?').run('starter', tenantId)
 
     const res = await generateReport()
     expect(res.statusCode).toBe(200)

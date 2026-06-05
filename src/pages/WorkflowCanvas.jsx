@@ -105,7 +105,7 @@ function WorkflowList() {
       const res = await api.post('/workflows', payload);
       navigate(`/workflows/${res.data.id}`);
     } catch (err) {
-      setError(err.response?.data?.error === 'upgrade_required' ? 'Workflow builder is available on Team and Pro plans' : err.response?.data?.error || 'Unable to create workflow');
+      setError(err.response?.data?.error === 'upgrade_required' ? 'Workflow builder is available on Professional and Enterprise plans' : err.response?.data?.error || 'Unable to create workflow');
     } finally {
       setCreating(false);
     }
@@ -312,7 +312,7 @@ function WorkflowEditor({ workflowId }) {
       pollRun(res.data.runId);
     } catch (err) {
       setRunning(false);
-      setError(err.response?.data?.error === 'upgrade_required' ? 'Workflow builder is available on Team and Pro plans' : err.response?.data?.error || 'Unable to run workflow');
+      setError(err.response?.data?.error === 'upgrade_required' ? 'Workflow builder is available on Professional and Enterprise plans' : err.response?.data?.error || 'Unable to run workflow');
     }
   };
 
@@ -359,7 +359,7 @@ function WorkflowEditor({ workflowId }) {
   };
 
   return (
-    <TierGate feature="workflow_builder" message="Available on Team and Pro plans">
+    <TierGate feature="workflow_builder" message="Available on Professional and Enterprise plans">
       <div className="flex flex-col gap-4 fade-in w-full h-[calc(100vh-120px)] min-h-[720px]">
         <div className="border border-[#262626] bg-[#050505] px-4 py-3 flex items-center justify-between gap-4">
           <div className="flex items-center gap-4 min-w-0 flex-1">

@@ -32,7 +32,7 @@ export default function Onboarding() {
   } = useOnboardingStore();
 
   const navigate = useNavigate();
-  const showWorkflowStep = ['team', 'pro', 'enterprise'].includes(user?.plan);
+  const showWorkflowStep = ['professional', 'enterprise'].includes(user?.plan);
 
   useEffect(() => {
     if (!isAuthenticated) navigate('/login', { replace: true });

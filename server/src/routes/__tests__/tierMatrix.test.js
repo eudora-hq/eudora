@@ -83,7 +83,7 @@ const migration002 = readFileSync(
   'utf8'
 )
 
-const PLANS = ['trial', 'solo', 'team', 'pro']
+const PLANS = ['trial', 'starter', 'professional', 'enterprise']
 
 function runSql(db, sql) {
   sql.split(';').map((stmt) => stmt.trim()).filter(Boolean).forEach((stmt) => {
@@ -243,9 +243,9 @@ describe('tier enforcement route matrix', () => {
 
   it.each([
     ['trial', 403],
-    ['solo', 403],
-    ['team', 201],
-    ['pro', 201],
+    ['starter', 403],
+    ['professional', 201],
+    ['enterprise', 201],
   ])('POST /workflows for %s → %i', async (plan, expectedStatus) => {
     const res = await postWorkflow(plan)
     expect(res.statusCode).toBe(expectedStatus)
@@ -253,9 +253,9 @@ describe('tier enforcement route matrix', () => {
 
   it.each([
     ['trial', 403],
-    ['solo', 403],
-    ['team', 403],
-    ['pro', 201],
+    ['starter', 403],
+    ['professional', 403],
+    ['enterprise', 201],
   ])('POST /cron at limit for %s → %i', async (plan, expectedStatus) => {
     seedAtLimit(plan, 'cron_jobs')
     const res = await postCron(plan)
@@ -264,9 +264,9 @@ describe('tier enforcement route matrix', () => {
 
   it.each([
     ['trial', 403],
-    ['solo', 403],
-    ['team', 403],
-    ['pro', 201],
+    ['starter', 403],
+    ['professional', 403],
+    ['enterprise', 201],
   ])('POST /context at limit for %s → %i', async (plan, expectedStatus) => {
     seedAtLimit(plan, 'context_files')
     const res = await postContext(plan)
@@ -275,9 +275,9 @@ describe('tier enforcement route matrix', () => {
 
   it.each([
     ['trial', 429],
-    ['solo', 429],
-    ['team', 429],
-    ['pro', 200],
+    ['starter', 429],
+    ['professional', 429],
+    ['enterprise', 200],
   ])('POST /chat at daily limit for %s → %i', async (plan, expectedStatus) => {
     seedAtLimit(plan, 'messages_per_day')
     const res = await postChat(plan)
@@ -286,18 +286,18 @@ describe('tier enforcement route matrix', () => {
 
   it.each([
     ['trial', 403],
-    ['solo', 403],
-    ['team', 403],
-    ['pro', 200],
+    ['starter', 403],
+    ['professional', 200],
+    ['enterprise', 200],
   ])('GET /audit/export for %s → %i', async (plan, expectedStatus) => {
     const res = await getAuditExport(plan)
     expect(res.statusCode).toBe(expectedStatus)
   })
 
-  it('SELF_HOSTED=true allows solo tenant to POST /workflows', async () => {
+  it('SELF_HOSTED=true allows starter tenant to POST /workflows', async () => {
     process.env.SELF_HOSTED = 'true'
 
-    const res = await postWorkflow('solo')
+    const res = await postWorkflow('starter')
 
     expect(res.statusCode).toBe(201)
     process.env.SELF_HOSTED = 'false'

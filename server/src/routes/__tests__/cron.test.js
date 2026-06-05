@@ -67,7 +67,7 @@ async function createApp(db) {
   return app
 }
 
-function insertTenant(db, plan = 'solo') {
+function insertTenant(db, plan = 'starter') {
   const tenantId = nanoid()
   db.prepare(
     'INSERT INTO tenants (id, name, plan, trial_ends_at, created_at) VALUES (?, ?, ?, ?, ?)'
@@ -177,7 +177,7 @@ describe('cron routes', () => {
   beforeEach(async () => {
     vi.clearAllMocks()
     db = createDb()
-    tenantId = insertTenant(db, 'solo')
+    tenantId = insertTenant(db, 'starter')
     userId = insertUser(db, tenantId)
     agentId = insertAgent(db, tenantId, userId)
     token = authToken(userId, tenantId)
@@ -223,11 +223,11 @@ describe('cron routes', () => {
     expect(body.message).toContain('Invalid schedule: "99 * * * *"')
   })
 
-  it('POST /cron when at cron_jobs limit for solo plan → 403', async () => {
+  it('POST /cron when at cron_jobs limit for starter plan → 403', async () => {
     const insertUsage = db.prepare(
       'INSERT INTO usage_events (id, tenant_id, event_type, value, ts) VALUES (?, ?, ?, ?, ?)'
     )
-    for (let i = 0; i < 5; i++) {
+    for (let i = 0; i < 10; i++) {
       insertUsage.run(nanoid(), tenantId, 'cron_jobs', 1, Date.now())
     }
 
@@ -329,7 +329,7 @@ describe('cron routes', () => {
       schedule: '0 9 * * *',
     })
     const { id } = JSON.parse(createRes.body)
-    const otherTenantId = insertTenant(db, 'solo')
+    const otherTenantId = insertTenant(db, 'starter')
     const otherUserId = insertUser(db, otherTenantId)
     const otherToken = authToken(otherUserId, otherTenantId)
 
@@ -371,7 +371,7 @@ describe('cron routes', () => {
 
   it('GET /cron/:id/runs from wrong tenant → 403', async () => {
     const jobId = insertJob(db, tenantId, agentId)
-    const otherTenantId = insertTenant(db, 'solo')
+    const otherTenantId = insertTenant(db, 'starter')
     const otherUserId = insertUser(db, otherTenantId)
     const otherToken = authToken(otherUserId, otherTenantId)
 

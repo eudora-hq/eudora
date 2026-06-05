@@ -61,7 +61,7 @@ export default function Sidebar() {
             );
 
             return item.id === 'workflows' ? (
-              <TierGate key={item.id} feature="workflow_builder" message="Available on Team and Pro plans">
+              <TierGate key={item.id} feature="workflow_builder" message="Available on Professional and Enterprise plans">
                 {link}
               </TierGate>
             ) : link;

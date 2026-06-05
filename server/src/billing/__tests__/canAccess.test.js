@@ -13,7 +13,7 @@ const migrationSql = readFileSync(
 )
 
 let db
-let trialTenantId, proTenantId, usageTenantId
+let trialTenantId, enterpriseTenantId, usageTenantId
 
 beforeAll(() => {
   db = new Database(':memory:')
@@ -28,12 +28,12 @@ beforeAll(() => {
   insertTenant.run(trialTenantId, 'Trial Co', 'trial', Date.now() + 14 * 24 * 60 * 60 * 1000, Date.now())
   seedFeatureFlags(db, trialTenantId, 'trial')
 
-  proTenantId = nanoid()
-  insertTenant.run(proTenantId, 'Pro Co', 'pro', null, Date.now())
-  seedFeatureFlags(db, proTenantId, 'pro')
+  enterpriseTenantId = nanoid()
+  insertTenant.run(enterpriseTenantId, 'Enterprise Co', 'enterprise', null, Date.now())
+  seedFeatureFlags(db, enterpriseTenantId, 'enterprise')
 
   usageTenantId = nanoid()
-  insertTenant.run(usageTenantId, 'Usage Co', 'solo', Date.now() + 14 * 24 * 60 * 60 * 1000, Date.now())
+  insertTenant.run(usageTenantId, 'Usage Co', 'starter', Date.now() + 14 * 24 * 60 * 60 * 1000, Date.now())
 })
 
 afterAll(() => {
@@ -49,41 +49,41 @@ describe('canAccess', () => {
     expect(canAccess(db, trialTenantId, 'audit_view')).toBe(true)
   })
 
-  it('pro tenant can access workflow_builder', () => {
-    expect(canAccess(db, proTenantId, 'workflow_builder')).toBe(true)
+  it('enterprise tenant can access workflow_builder', () => {
+    expect(canAccess(db, enterpriseTenantId, 'workflow_builder')).toBe(true)
   })
 
-  it('pro tenant can access audit_export', () => {
-    expect(canAccess(db, proTenantId, 'audit_export')).toBe(true)
+  it('enterprise tenant can access audit_export', () => {
+    expect(canAccess(db, enterpriseTenantId, 'audit_export')).toBe(true)
   })
 })
 
 describe('isUnderLimit', () => {
-  it('returns true when 4 cron_jobs events exist (solo limit is 5)', () => {
+  it('returns true when 9 cron_jobs events exist (starter limit is 10)', () => {
     const insertUsage = db.prepare(
       'INSERT INTO usage_events (id, tenant_id, event_type, value, ts) VALUES (?, ?, ?, ?, ?)'
     )
-    for (let i = 0; i < 4; i++) {
+    for (let i = 0; i < 9; i++) {
       insertUsage.run(nanoid(), usageTenantId, 'cron_jobs', 1, Date.now())
     }
-    expect(isUnderLimit(db, usageTenantId, 'solo', 'cron_jobs')).toBe(true)
+    expect(isUnderLimit(db, usageTenantId, 'starter', 'cron_jobs')).toBe(true)
   })
 
-  it('returns false when 5 cron_jobs events exist (solo limit is 5, at limit)', () => {
-    // Insert 1 more to reach 5 total
+  it('returns false when 10 cron_jobs events exist (starter limit is 10, at limit)', () => {
+    // Insert 1 more to reach 10 total
     db.prepare(
       'INSERT INTO usage_events (id, tenant_id, event_type, value, ts) VALUES (?, ?, ?, ?, ?)'
     ).run(nanoid(), usageTenantId, 'cron_jobs', 1, Date.now())
-    expect(isUnderLimit(db, usageTenantId, 'solo', 'cron_jobs')).toBe(false)
+    expect(isUnderLimit(db, usageTenantId, 'starter', 'cron_jobs')).toBe(false)
   })
 
-  it('always returns true for pro plan cron_jobs (Infinity limit)', () => {
-    expect(isUnderLimit(db, proTenantId, 'pro', 'cron_jobs')).toBe(true)
+  it('always returns true for enterprise plan cron_jobs (Infinity limit)', () => {
+    expect(isUnderLimit(db, enterpriseTenantId, 'enterprise', 'cron_jobs')).toBe(true)
   })
 })
 
 describe('seedFeatureFlags — plan upgrade', () => {
-  it('re-seeding with pro plan updates all flags correctly', () => {
+  it('re-seeding with enterprise plan updates all flags correctly', () => {
     const tenantId = nanoid()
     db.prepare(
       'INSERT INTO tenants (id, name, plan, trial_ends_at, created_at) VALUES (?, ?, ?, ?, ?)'
@@ -94,8 +94,8 @@ describe('seedFeatureFlags — plan upgrade', () => {
     expect(canAccess(db, tenantId, 'workflow_builder')).toBe(false)
     expect(canAccess(db, tenantId, 'audit_view')).toBe(true)
 
-    // Upgrade to pro
-    seedFeatureFlags(db, tenantId, 'pro')
+    // Upgrade to enterprise
+    seedFeatureFlags(db, tenantId, 'enterprise')
     expect(canAccess(db, tenantId, 'workflow_builder')).toBe(true)
     expect(canAccess(db, tenantId, 'audit_export')).toBe(true)
     expect(canAccess(db, tenantId, 'audit_view')).toBe(true)

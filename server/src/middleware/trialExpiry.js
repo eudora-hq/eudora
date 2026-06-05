@@ -1,6 +1,6 @@
 export function checkTrialExpiry(request, reply, done) {
   if (process.env.SELF_HOSTED === 'true') {
-    request.tenant = { plan: 'pro', trial_ends_at: null }
+    request.tenant = { plan: 'enterprise', trial_ends_at: null }
     return done()
   }
 

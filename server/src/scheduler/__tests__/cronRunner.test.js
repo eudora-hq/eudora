@@ -82,7 +82,7 @@ function createDb() {
 function insertTenant(db) {
   const tenantId = nanoid()
   db.prepare('INSERT INTO tenants (id, name, plan, created_at) VALUES (?, ?, ?, ?)')
-    .run(tenantId, 'Tenant', 'pro', Date.now())
+    .run(tenantId, 'Tenant', 'enterprise', Date.now())
   return tenantId
 }
 

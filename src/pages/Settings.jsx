@@ -7,7 +7,6 @@ import { useSelfHosted } from '../hooks/useSelfHosted';
 const PROVIDERS = ['anthropic', 'openai', 'gemini', 'ollama', 'custom'];
 const METRIC_LABELS = {
   agents: 'Agents',
-  messages_today: 'Messages today',
   cron_jobs: 'Cron jobs',
   context_files: 'Context files',
   workflows: 'Workflows',
@@ -165,7 +164,7 @@ export default function Settings() {
 
   const activePlan = usage?.plan || plan;
   const showUpgradeButton = activePlan === 'trial' && !isSelfHosted;
-  const showManageButton = ['solo', 'team', 'pro'].includes(activePlan) && !isSelfHosted;
+  const showManageButton = ['starter', 'professional', 'enterprise'].includes(activePlan) && !isSelfHosted;
   const showSelfHostedButton = isSelfHosted;
 
   return (
@@ -310,9 +309,11 @@ export default function Settings() {
         {billingError && <p className="font-mono text-[10px] text-danger uppercase tracking-widest mb-4">{billingError}</p>}
         {manageError && <p className="font-mono text-[10px] text-danger uppercase tracking-widest mb-4">{manageError}</p>}
         <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-          {Object.entries(usage?.metrics || placeholderUsage(plan).metrics).map(([key, metric]) => (
-            <UsageBar key={key} label={METRIC_LABELS[key] || key} used={metric.used} limit={metric.limit} />
-          ))}
+          {Object.entries(usage?.metrics || placeholderUsage(plan).metrics)
+            .filter(([key]) => key !== 'messages_today')
+            .map(([key, metric]) => (
+              <UsageBar key={key} label={METRIC_LABELS[key] || key} used={metric.used} limit={metric.limit} />
+            ))}
         </div>
       </section>
 
@@ -352,7 +353,6 @@ function placeholderUsage(plan) {
     trial_ends_at: null,
     metrics: {
       agents: { used: 0, limit: Infinity },
-      messages_today: { used: 0, limit: 500 },
       cron_jobs: { used: 0, limit: 3 },
       context_files: { used: 0, limit: 50 },
       workflows: { used: 0, limit: 0 },

@@ -6,7 +6,6 @@ import { PlanModal } from '../components/PlanModal';
 
 const METRICS = [
   ['agents', 'Agents', 'smart_toy'],
-  ['messages_today', 'Messages Today', 'chat'],
   ['cron_jobs', 'Cron Jobs', 'calendar_today'],
   ['context_files', 'Context Files', 'description'],
   ['workflows', 'Workflows', 'account_tree'],
@@ -29,7 +28,7 @@ export default function Dashboard() {
   const trialDays = usage?.trial_ends_at
     ? Math.max(0, Math.ceil((usage.trial_ends_at - Date.now()) / (24 * 60 * 60 * 1000)))
     : null;
-  const showUpgrade = !isSelfHosted && plan !== 'pro';
+  const showUpgrade = !isSelfHosted && plan !== 'enterprise';
 
   return (
   <>

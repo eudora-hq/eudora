@@ -503,7 +503,7 @@ function mapError(err) {
   if (status === 400 && data?.error === 'invalid_api_key') return 'Invalid API key. Update it in Settings.';
   if (status === 400 && data?.error === 'request_blocked') return `Message blocked by security layer: ${data.violation || 'policy_violation'}`;
   if (status === 429 && data?.error === 'provider_rate_limit') return 'AI provider is rate limiting. Try again shortly.';
-  if (status === 429 && data?.error === 'daily_limit_reached') return 'Daily message limit reached. Upgrade your plan.';
+  if (status === 429 && data?.error === 'daily_limit_reached') return 'Request limit reached. Try again later or upgrade your plan.';
   return data?.message || data?.error || 'REQUEST FAILED';
 }
 

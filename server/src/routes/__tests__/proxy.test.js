@@ -53,7 +53,7 @@ beforeEach(async () => {
 
   db.prepare(
     'INSERT INTO tenants (id, name, plan, trial_ends_at, created_at) VALUES (?, ?, ?, ?, ?)'
-  ).run(tenantId, 'Proxy Co', 'pro', null, Date.now())
+  ).run(tenantId, 'Proxy Co', 'enterprise', null, Date.now())
 
   db.prepare(
     'INSERT INTO users (id, tenant_id, email, password_hash, role) VALUES (?, ?, ?, ?, ?)'

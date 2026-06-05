@@ -58,7 +58,7 @@ beforeAll(async () => {
 
   // Paid plan tenant (trial_ends_at = null)
   paidTenantId = nanoid()
-  insertTenant.run(paidTenantId, 'Paid Tenant', 'pro', null, Date.now())
+  insertTenant.run(paidTenantId, 'Paid Tenant', 'enterprise', null, Date.now())
   const paidUserId = nanoid()
   insertUser.run(paidUserId, paidTenantId, 'paid@test.com', 'hash', 'owner')
   paidToken = generateAccessToken({ userId: paidUserId, tenantId: paidTenantId, role: 'owner' })
@@ -164,6 +164,6 @@ describe('checkTrialExpiry', () => {
       headers: { authorization: `Bearer ${paidToken}` },
     })
     expect(res.statusCode).toBe(200)
-    expect(JSON.parse(res.body).plan).toBe('pro')
+    expect(JSON.parse(res.body).plan).toBe('enterprise')
   })
 })

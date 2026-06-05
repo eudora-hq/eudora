@@ -62,7 +62,7 @@ beforeEach(() => {
   const userId = nanoid()
   db.prepare(
     'INSERT INTO tenants (id, name, plan, trial_ends_at, created_at) VALUES (?, ?, ?, ?, ?)'
-  ).run(tenantId, 'Workflow Tenant', 'team', Date.now() + 14 * 24 * 60 * 60 * 1000, Date.now())
+  ).run(tenantId, 'Workflow Tenant', 'professional', Date.now() + 14 * 24 * 60 * 60 * 1000, Date.now())
   db.prepare(
     'INSERT INTO users (id, tenant_id, email, password_hash, role) VALUES (?, ?, ?, ?, ?)'
   ).run(userId, tenantId, 'workflow@test.com', 'hash', 'owner')

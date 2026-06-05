@@ -25,9 +25,9 @@ const migrationSql = readFileSync(
 let app, db
 let tenantId, userId, tokenA
 let tenantBId, userBId, tokenB
-let soloTenantId, soloUserId, soloToken
-let proTenantId, proUserId, proToken
-let proOldTs, proNewTs
+let starterTenantId, starterUserId, starterToken
+let professionalTenantId, professionalUserId, professionalToken
+let professionalOldTs, professionalNewTs
 
 beforeAll(async () => {
   db = new Database(':memory:')
@@ -60,29 +60,29 @@ beforeAll(async () => {
   tokenB = generateAccessToken({ userId: userBId, tenantId: tenantBId, role: 'owner' })
   seedFeatureFlags(db, tenantBId, 'trial')
 
-  // ── Solo tenant (export forbidden) ──────────────────────────────────────────
-  soloTenantId = nanoid()
-  soloUserId = nanoid()
+  // ── Starter tenant (export forbidden) ──────────────────────────────────────────
+  starterTenantId = nanoid()
+  starterUserId = nanoid()
   db.prepare(
     'INSERT INTO tenants (id, name, plan, trial_ends_at, created_at) VALUES (?, ?, ?, ?, ?)'
-  ).run(soloTenantId, 'Solo Corp', 'solo', null, now)
+  ).run(starterTenantId, 'Starter Corp', 'starter', null, now)
   db.prepare(
     'INSERT INTO users (id, tenant_id, email, password_hash, role) VALUES (?, ?, ?, ?, ?)'
-  ).run(soloUserId, soloTenantId, 'solo@test.com', 'hash', 'owner')
-  soloToken = generateAccessToken({ userId: soloUserId, tenantId: soloTenantId, role: 'owner' })
-  seedFeatureFlags(db, soloTenantId, 'solo')
+  ).run(starterUserId, starterTenantId, 'starter@test.com', 'hash', 'owner')
+  starterToken = generateAccessToken({ userId: starterUserId, tenantId: starterTenantId, role: 'owner' })
+  seedFeatureFlags(db, starterTenantId, 'starter')
 
-  // ── Pro tenant (export allowed) ─────────────────────────────────────────────
-  proTenantId = nanoid()
-  proUserId = nanoid()
+  // ── Professional tenant (export allowed) ─────────────────────────────────────────────
+  professionalTenantId = nanoid()
+  professionalUserId = nanoid()
   db.prepare(
     'INSERT INTO tenants (id, name, plan, trial_ends_at, created_at) VALUES (?, ?, ?, ?, ?)'
-  ).run(proTenantId, 'Pro Corp', 'pro', null, now)
+  ).run(professionalTenantId, 'Professional Corp', 'professional', null, now)
   db.prepare(
     'INSERT INTO users (id, tenant_id, email, password_hash, role) VALUES (?, ?, ?, ?, ?)'
-  ).run(proUserId, proTenantId, 'pro@test.com', 'hash', 'owner')
-  proToken = generateAccessToken({ userId: proUserId, tenantId: proTenantId, role: 'owner' })
-  seedFeatureFlags(db, proTenantId, 'pro')
+  ).run(professionalUserId, professionalTenantId, 'professional@test.com', 'hash', 'owner')
+  professionalToken = generateAccessToken({ userId: professionalUserId, tenantId: professionalTenantId, role: 'owner' })
+  seedFeatureFlags(db, professionalTenantId, 'professional')
 
   // ── Insert 5 audit_log rows for Tenant A ────────────────────────────────────
   const insert = db.prepare(
@@ -97,10 +97,10 @@ beforeAll(async () => {
   // 1 injection_detected, risk_score 40
   insert.run(nanoid(), tenantId, userId, 'injection_detected', 40, '{}', now - 5000)
 
-  proOldTs = now - 10000
-  proNewTs = now - 1000
-  insert.run(nanoid(), proTenantId, proUserId, 'chat_message', 0, JSON.stringify({ marker: 'old' }), proOldTs)
-  insert.run(nanoid(), proTenantId, proUserId, 'guard_block', 80, JSON.stringify({ marker: 'new' }), proNewTs)
+  professionalOldTs = now - 10000
+  professionalNewTs = now - 1000
+  insert.run(nanoid(), professionalTenantId, professionalUserId, 'chat_message', 0, JSON.stringify({ marker: 'old' }), professionalOldTs)
+  insert.run(nanoid(), professionalTenantId, professionalUserId, 'guard_block', 80, JSON.stringify({ marker: 'new' }), professionalNewTs)
 
   // ── App ─────────────────────────────────────────────────────────────────────
   app = Fastify({ logger: false })
@@ -199,14 +199,14 @@ describe('GET /audit', () => {
 // ── GET /audit/export ─────────────────────────────────────────────────────────
 
 describe('GET /audit/export', () => {
-  it('GET /audit/export?format=json with solo tenant → 403 upgrade_required', async () => {
-    const res = await req('/audit/export?format=json', { token: soloToken })
+  it('GET /audit/export?format=json with starter tenant → 403 upgrade_required', async () => {
+    const res = await req('/audit/export?format=json', { token: starterToken })
     expect(res.statusCode).toBe(403)
     expect(JSON.parse(res.body).error).toBe('upgrade_required')
   })
 
-  it('GET /audit/export?format=json with pro tenant → 200, Content-Type application/json', async () => {
-    const res = await req('/audit/export?format=json', { token: proToken })
+  it('GET /audit/export?format=json with professional tenant → 200, Content-Type application/json', async () => {
+    const res = await req('/audit/export?format=json', { token: professionalToken })
     expect(res.statusCode).toBe(200)
     expect(res.headers['content-type']).toContain('application/json')
     expect(res.headers['content-disposition']).toContain('eudora-audit.json')
@@ -217,35 +217,35 @@ describe('GET /audit/export', () => {
     expect(body[0].metadata.marker).toBe('old')
   })
 
-  it('GET /audit/export?format=csv with pro tenant → 200, Content-Type text/csv', async () => {
-    const res = await req('/audit/export?format=csv', { token: proToken })
+  it('GET /audit/export?format=csv with professional tenant → 200, Content-Type text/csv', async () => {
+    const res = await req('/audit/export?format=csv', { token: professionalToken })
     expect(res.statusCode).toBe(200)
     expect(res.headers['content-type']).toContain('text/csv')
     expect(res.body).toContain('id,action,risk_score,timestamp,user_id,metadata')
     expect(res.body).toContain('guard_block')
   })
 
-  it('GET /audit/export?format=pdf with pro tenant → 200, Content-Type application/pdf', async () => {
-    const res = await req('/audit/export?format=pdf', { token: proToken })
+  it('GET /audit/export?format=pdf with professional tenant → 200, Content-Type application/pdf', async () => {
+    const res = await req('/audit/export?format=pdf', { token: professionalToken })
     expect(res.statusCode).toBe(200)
     expect(res.headers['content-type']).toContain('application/pdf')
     expect(res.rawPayload.subarray(0, 4).toString()).toBe('%PDF')
   })
 
   it('GET /audit/export?format=json with dateFrom filter → only returns events after that timestamp', async () => {
-    const res = await req(`/audit/export?format=json&dateFrom=${proOldTs + 1}`, { token: proToken })
+    const res = await req(`/audit/export?format=json&dateFrom=${professionalOldTs + 1}`, { token: professionalToken })
     expect(res.statusCode).toBe(200)
 
     const body = JSON.parse(res.body)
     expect(body).toHaveLength(1)
-    expect(body[0].ts).toBe(proNewTs)
+    expect(body[0].ts).toBe(professionalNewTs)
     expect(body[0].metadata.marker).toBe('new')
   })
 
-  it('GET /audit/export with SELF_HOSTED=true and solo tenant → 200', async () => {
+  it('GET /audit/export with SELF_HOSTED=true and starter tenant → 200', async () => {
     process.env.SELF_HOSTED = 'true'
 
-    const res = await req('/audit/export?format=json', { token: soloToken })
+    const res = await req('/audit/export?format=json', { token: starterToken })
 
     expect(res.statusCode).toBe(200)
     expect(res.headers['content-type']).toContain('application/json')

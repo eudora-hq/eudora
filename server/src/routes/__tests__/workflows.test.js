@@ -24,16 +24,16 @@ const migrationSql = readFileSync(
 
 let app
 let db
-let soloToken
-let teamToken
+let starterToken
+let professionalToken
 
 beforeEach(async () => {
   db = new Database(':memory:')
   db.pragma('foreign_keys = ON')
   db.exec(migrationSql)
 
-  soloToken = seedTenant('solo')
-  teamToken = seedTenant('team')
+  starterToken = seedTenant('starter')
+  professionalToken = seedTenant('professional')
 
   app = Fastify({ logger: false })
   app.decorate('db', db)
@@ -86,14 +86,14 @@ function postWorkflow(token) {
 }
 
 describe('POST /workflows', () => {
-  it('returns 403 for a solo tenant', async () => {
-    const res = await postWorkflow(soloToken)
+  it('returns 403 for a starter tenant', async () => {
+    const res = await postWorkflow(starterToken)
     expect(res.statusCode).toBe(403)
     expect(JSON.parse(res.body).error).toBe('upgrade_required')
   })
 
-  it('returns 201 and the created workflow for a team tenant', async () => {
-    const res = await postWorkflow(teamToken)
+  it('returns 201 and the created workflow for a professional tenant', async () => {
+    const res = await postWorkflow(professionalToken)
     expect(res.statusCode).toBe(201)
 
     const body = JSON.parse(res.body)

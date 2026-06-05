@@ -68,9 +68,9 @@ VITE_SELF_HOSTED=true
 # Optional — only needed for cloud billing
 STRIPE_SECRET_KEY=
 STRIPE_WEBHOOK_SECRET=
-STRIPE_PRICE_SOLO=
-STRIPE_PRICE_TEAM=
-STRIPE_PRICE_PRO=
+STRIPE_PRICE_STARTER=
+STRIPE_PRICE_PROFESSIONAL=
+STRIPE_PRICE_ENTERPRISE=
 
 # Optional — only needed for OpenAI OAuth
 OPENAI_OAUTH_CLIENT_ID=
@@ -220,9 +220,9 @@ docker-compose up -d
 | `CLIENT_URL` | No | Frontend URL for CORS and Stripe redirects. Default: `http://localhost:5173` |
 | `STRIPE_SECRET_KEY` | No | Only needed for cloud billing |
 | `STRIPE_WEBHOOK_SECRET` | No | Only needed for cloud billing |
-| `STRIPE_PRICE_SOLO` | No | Stripe price ID for Solo plan |
-| `STRIPE_PRICE_TEAM` | No | Stripe price ID for Team plan |
-| `STRIPE_PRICE_PRO` | No | Stripe price ID for Pro plan |
+| `STRIPE_PRICE_STARTER` | No | Stripe price ID for Starter plan |
+| `STRIPE_PRICE_PROFESSIONAL` | No | Stripe price ID for Professional plan |
+| `STRIPE_PRICE_ENTERPRISE` | No | Stripe price ID for Enterprise plan |
 | `OPENAI_OAUTH_CLIENT_ID` | No | Only needed for OpenAI OAuth flow |
 | `OPENAI_OAUTH_CLIENT_SECRET` | No | Only needed for OpenAI OAuth flow |
 | `OPENAI_OAUTH_REDIRECT_URI` | No | OAuth callback URL for OpenAI OAuth flow |

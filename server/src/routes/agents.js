@@ -1,4 +1,5 @@
 import { nanoid } from 'nanoid'
+import { isUnderAgentLimit } from '../billing/canAccess.js'
 import { log } from '../audit/auditLogger.js'
 import { encrypt } from '../utils/encryption.js'
 import { validateOwnership } from '../utils/ownershipChain.js'
@@ -54,6 +55,13 @@ export default async function agentsRoutes(fastify) {
     const mode = interceptionMode || 'observe'
     if (!INTERCEPTION_MODES.has(mode)) {
       return reply.code(400).send({ error: 'invalid_interception_mode' })
+    }
+    if (!isUnderAgentLimit(db, request.tenantId, request.tenant.plan)) {
+      return reply.code(403).send({
+        error: 'limit_reached',
+        message: 'Upgrade to monitor more agents',
+        upgradeUrl: '/billing',
+      })
     }
 
     const ownership = validateOwnership(
@@ -259,6 +267,13 @@ export default async function agentsRoutes(fastify) {
       return reply.code(400).send({
         error: 'validation_error',
         message: 'name, purpose and model_provider are required',
+      })
+    }
+    if (!isUnderAgentLimit(db, request.tenantId, request.tenant.plan)) {
+      return reply.code(403).send({
+        error: 'limit_reached',
+        message: 'Upgrade to monitor more agents',
+        upgradeUrl: '/billing',
       })
     }
 

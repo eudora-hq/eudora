@@ -1,18 +1,18 @@
 import Stripe from 'stripe'
 import { TIER_LIMITS } from '../../../shared/constants/tierLimits.js'
-import { seedFeatureFlags } from '../billing/canAccess.js'
+import { normalizePlan, seedFeatureFlags } from '../billing/canAccess.js'
 
 function getStripeClient() {
   return process.env.STRIPE_SECRET_KEY ? new Stripe(process.env.STRIPE_SECRET_KEY) : null
 }
 
-const VALID_PLANS = new Set(['solo', 'team', 'pro'])
+const VALID_PLANS = new Set(['starter', 'professional', 'enterprise'])
 
 function getPriceIds() {
   return {
-    solo: process.env.STRIPE_PRICE_SOLO,
-    team: process.env.STRIPE_PRICE_TEAM,
-    pro: process.env.STRIPE_PRICE_PRO,
+    starter: process.env.STRIPE_PRICE_STARTER,
+    professional: process.env.STRIPE_PRICE_PROFESSIONAL,
+    enterprise: process.env.STRIPE_PRICE_ENTERPRISE,
   }
 }
 
@@ -27,7 +27,8 @@ export default async function billingRoutes(fastify) {
 
   fastify.post('/checkout', async (request, reply) => {
     const { plan } = request.body || {}
-    if (!VALID_PLANS.has(plan)) {
+    const checkoutPlan = normalizePlan(plan)
+    if (!VALID_PLANS.has(plan) || !getPriceIds()[checkoutPlan]) {
       return reply.code(400).send({ error: 'invalid_plan' })
     }
 
@@ -42,10 +43,10 @@ export default async function billingRoutes(fastify) {
       const sessionParams = {
         mode: 'subscription',
         payment_method_types: ['card'],
-        line_items: [{ price: getPriceIds()[plan], quantity: 1 }],
+        line_items: [{ price: getPriceIds()[checkoutPlan], quantity: 1 }],
         success_url: `${process.env.CLIENT_URL || 'http://localhost:5173'}/billing/success?session_id={CHECKOUT_SESSION_ID}`,
         cancel_url: `${process.env.CLIENT_URL || 'http://localhost:5173'}/billing`,
-        metadata: { tenantId: request.tenantId, plan },
+        metadata: { tenantId: request.tenantId, plan: checkoutPlan },
       }
       if (tenant?.stripe_customer_id) {
         sessionParams.customer = tenant.stripe_customer_id
@@ -115,6 +116,7 @@ export default async function billingRoutes(fastify) {
           const customerId = session.customer
 
           if (!tenantId || !plan) break
+          const newPlan = normalizePlan(plan)
 
           db.prepare(`
             UPDATE tenants SET
@@ -122,9 +124,9 @@ export default async function billingRoutes(fastify) {
               trial_ends_at = NULL,
               stripe_customer_id = ?
             WHERE id = ?
-          `).run(plan, customerId, tenantId)
+          `).run(newPlan, customerId, tenantId)
 
-          await seedFeatureFlags(db, tenantId, plan)
+          await seedFeatureFlags(db, tenantId, newPlan)
           break
         }
 
@@ -139,9 +141,9 @@ export default async function billingRoutes(fastify) {
           const priceId = subscription.items?.data?.[0]?.price?.id
           const priceIds = getPriceIds()
           const planMap = {
-            [priceIds.solo]: 'solo',
-            [priceIds.team]: 'team',
-            [priceIds.pro]: 'pro',
+            [priceIds.starter]: 'starter',
+            [priceIds.professional]: 'professional',
+            [priceIds.enterprise]: 'enterprise',
           }
           const newPlan = planMap[priceId]
           if (!newPlan) break
@@ -176,7 +178,7 @@ export default async function billingRoutes(fastify) {
 
   fastify.get('/usage', async (request, reply) => {
     const tenantId = request.tenantId
-    const plan = request.tenant?.plan || 'trial'
+    const plan = normalizePlan(request.tenant?.plan || 'trial')
     const limits = process.env.SELF_HOSTED === 'true'
       ? {
           agents: Infinity,
@@ -197,7 +199,7 @@ export default async function billingRoutes(fastify) {
     const workflows = db.prepare('SELECT COUNT(*) AS count FROM workflows WHERE tenant_id = ?').get(tenantId).count
 
     return reply.send({
-      plan: process.env.SELF_HOSTED === 'true' ? 'pro' : plan,
+      plan: process.env.SELF_HOSTED === 'true' ? 'enterprise' : plan,
       trial_ends_at: process.env.SELF_HOSTED === 'true' ? null : request.tenant?.trial_ends_at || null,
       metrics: {
         agents: { used: agents, limit: serializeLimit(limits.agents) },

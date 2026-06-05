@@ -33,9 +33,9 @@ process.env.JWT_SECRET = 'test-jwt-secret-32-chars-minimum!!'
 process.env.JWT_EXPIRES_IN = '15m'
 process.env.STRIPE_SECRET_KEY = 'sk_test_mock'
 process.env.STRIPE_WEBHOOK_SECRET = 'whsec_mock'
-process.env.STRIPE_PRICE_SOLO = 'price_solo'
-process.env.STRIPE_PRICE_TEAM = 'price_team'
-process.env.STRIPE_PRICE_PRO = 'price_pro'
+process.env.STRIPE_PRICE_STARTER = 'price_starter'
+process.env.STRIPE_PRICE_PROFESSIONAL = 'price_professional'
+process.env.STRIPE_PRICE_ENTERPRISE = 'price_enterprise'
 process.env.CLIENT_URL = 'http://localhost:5173'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
@@ -148,7 +148,7 @@ describe('billing routes', () => {
 
     db = createDb()
     tenant = seedTenant(db, { plan: 'trial' })
-    subscribedTenant = seedTenant(db, { plan: 'solo', stripeCustomerId: 'cus_test_123' })
+    subscribedTenant = seedTenant(db, { plan: 'starter', stripeCustomerId: 'cus_test_123' })
     app = await createApp(db)
   })
 
@@ -158,12 +158,12 @@ describe('billing routes', () => {
     db.close()
   })
 
-  it("POST /billing/checkout with valid plan 'solo' → 200, returns checkoutUrl", async () => {
+  it("POST /billing/checkout with valid plan 'starter' → 200, returns checkoutUrl", async () => {
     const res = await app.inject({
       method: 'POST',
       url: '/billing/checkout',
       headers: auth(tenant.token),
-      payload: { plan: 'solo' },
+      payload: { plan: 'starter' },
     })
 
     expect(res.statusCode).toBe(200)
@@ -172,17 +172,17 @@ describe('billing routes', () => {
     })
     expect(stripeMocks.checkoutCreate).toHaveBeenCalledWith(expect.objectContaining({
       mode: 'subscription',
-      line_items: [{ price: 'price_solo', quantity: 1 }],
-      metadata: { tenantId: tenant.tenantId, plan: 'solo' },
+      line_items: [{ price: 'price_starter', quantity: 1 }],
+      metadata: { tenantId: tenant.tenantId, plan: 'starter' },
     }))
   })
 
-  it("POST /billing/checkout with invalid plan 'enterprise' → 400", async () => {
+  it("POST /billing/checkout with invalid plan 'unknown' → 400", async () => {
     const res = await app.inject({
       method: 'POST',
       url: '/billing/checkout',
       headers: auth(tenant.token),
-      payload: { plan: 'enterprise' },
+      payload: { plan: 'unknown' },
     })
 
     expect(res.statusCode).toBe(400)
@@ -192,7 +192,7 @@ describe('billing routes', () => {
     const res = await app.inject({
       method: 'POST',
       url: '/billing/checkout',
-      payload: { plan: 'solo' },
+      payload: { plan: 'starter' },
     })
 
     expect(res.statusCode).toBe(401)
@@ -233,7 +233,7 @@ describe('billing routes', () => {
       type: 'checkout.session.completed',
       data: {
         object: {
-          metadata: { tenantId: tenant.tenantId, plan: 'solo' },
+          metadata: { tenantId: tenant.tenantId, plan: 'starter' },
           customer: 'cus_checkout_123',
         },
       },
@@ -252,7 +252,7 @@ describe('billing routes', () => {
     expect(res.statusCode).toBe(200)
     const row = db.prepare('SELECT plan, trial_ends_at, stripe_customer_id FROM tenants WHERE id = ?')
       .get(tenant.tenantId)
-    expect(row.plan).toBe('solo')
+    expect(row.plan).toBe('starter')
     expect(row.trial_ends_at).toBeNull()
     expect(row.stripe_customer_id).toBe('cus_checkout_123')
   })

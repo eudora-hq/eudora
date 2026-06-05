@@ -315,7 +315,7 @@ export default function AuditLog() {
                 <span className="material-symbols-outlined text-[18px]">close</span>
               </button>
             </div>
-            <p className="font-sans text-[15px] text-white leading-relaxed mb-6">Audit export is available on the Pro plan</p>
+            <p className="font-sans text-[15px] text-white leading-relaxed mb-6">Audit export is available on Professional and Enterprise plans</p>
             <button className="primary-btn relative bg-primary text-[#050505] py-3 px-6 font-mono text-[12px] font-bold uppercase tracking-[0.15em] transition-all overflow-hidden active:scale-[0.98] cursor-pointer w-full">
               <span className="relative z-10">UPGRADE</span>
               <div className="scan-line"></div>

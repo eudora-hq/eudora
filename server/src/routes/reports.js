@@ -2,13 +2,14 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'fs'
 import { dirname, resolve } from 'path'
 import { fileURLToPath } from 'url'
 import { nanoid } from 'nanoid'
+import { normalizePlan } from '../billing/canAccess.js'
 import { generateComplianceReport } from '../reports/complianceReport.js'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
 const REPORT_DIR = resolve(__dirname, '../../.compliance-reports')
 
 function canGenerateReports(request) {
-  return process.env.SELF_HOSTED === 'true' || request.tenant?.plan === 'enterprise'
+  return process.env.SELF_HOSTED === 'true' || normalizePlan(request.tenant?.plan) === 'enterprise'
 }
 
 function ensureReportDir() {

@@ -80,7 +80,7 @@ export default async function auditRoutes(fastify) {
     if (process.env.SELF_HOSTED !== 'true' && !canAccess(db, request.tenantId, 'audit_export')) {
       return reply.code(403).send({
         error: 'upgrade_required',
-        message: 'Audit export is available on the Pro plan',
+        message: 'Audit export is available on Professional and Enterprise plans',
         upgradeUrl: '/billing',
       })
     }

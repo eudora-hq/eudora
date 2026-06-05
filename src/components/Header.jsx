@@ -59,7 +59,7 @@ export default function Header() {
           onClick={() => setShowModal(true)}
           className="font-mono text-[9px] uppercase text-warning tracking-[0.1em] hover:underline ml-1 cursor-pointer"
         >
-          UPGRADE TO PRO
+          UPGRADE PLAN
         </button>
       </div>
     )}

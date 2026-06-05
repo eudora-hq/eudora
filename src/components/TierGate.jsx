@@ -8,10 +8,12 @@ export function TierGate({ feature, message, children }) {
   if (isSelfHosted) return children
 
   const GATED_FEATURES = {
-    workflow_builder: ['team', 'pro', 'enterprise'],
-    audit_export: ['pro', 'enterprise'],
+    workflow_builder: ['professional', 'enterprise'],
+    audit_export: ['professional', 'enterprise'],
     compliance_reports: ['enterprise'],
-    team_members: ['team', 'pro', 'enterprise'],
+    proxy_mode: ['professional', 'enterprise'],
+    pbac: ['enterprise'],
+    team_members: ['professional', 'enterprise'],
   }
 
   const plan = usage?.plan || 'trial'

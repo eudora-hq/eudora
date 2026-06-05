@@ -5,56 +5,50 @@ import { useSelfHosted } from '../hooks/useSelfHosted'
 
 const PLANS = [
   {
-    id: 'solo',
-    name: 'SOLO',
-    price: '€19',
+    id: 'starter',
+    name: 'STARTER',
+    price: '€99',
     period: '/mo',
     features: [
-      '500 messages / day',
-      '5 cron jobs',
-      '50 context files',
-      '30-day audit retention',
-      '1 seat',
-    ],
-    missing: [
-      'Workflow builder',
-      'Audit export',
+      '10 agents monitored',
+      '3 seats',
+      '10 scheduled runs',
+      '90-day audit retention',
+      'Human accountability chain',
+      'Full audit trail',
     ],
     recommended: false,
   },
   {
-    id: 'team',
-    name: 'TEAM',
-    price: '€79',
+    id: 'professional',
+    name: 'PROFESSIONAL',
+    price: '€399',
     period: '/mo',
     features: [
-      '2,000 messages / day',
-      '20 cron jobs',
-      '200 context files',
-      '90-day audit retention',
+      '50 agents monitored',
       '10 seats',
-      'Workflow builder',
-    ],
-    missing: [
-      'Audit export',
+      '50 scheduled runs',
+      '20 workflows',
+      '1-year audit retention',
+      'Proxy mode (any agent)',
+      'Audit export (JSON/CSV/PDF)',
     ],
     recommended: true,
   },
   {
-    id: 'pro',
-    name: 'PRO',
-    price: '€199',
+    id: 'enterprise',
+    name: 'ENTERPRISE',
+    price: '€999',
     period: '/mo',
     features: [
-      'Unlimited messages',
-      'Unlimited cron jobs',
-      'Unlimited context files',
-      '1-year audit retention',
+      'Unlimited agents',
       'Unlimited seats',
-      'Workflow builder',
-      'Audit export (JSON/CSV/PDF)',
+      '3-year audit retention',
+      'Compliance reports (PDF)',
+      'PBAC (scope policies)',
+      'Proxy mode',
+      'Audit export',
     ],
-    missing: [],
     recommended: false,
   },
 ]
@@ -162,12 +156,6 @@ export function PlanModal({ onClose }) {
                   {plan.features.map((feature) => (
                     <li key={feature} className="flex items-start gap-2">
                       <span className="material-symbols-outlined text-primary text-sm mt-0.5 flex-shrink-0">check</span>
-                      <span className="font-mono text-xs text-text-muted">{feature}</span>
-                    </li>
-                  ))}
-                  {plan.missing.map((feature) => (
-                    <li key={feature} className="flex items-start gap-2 opacity-40">
-                      <span className="material-symbols-outlined text-text-muted text-sm mt-0.5 flex-shrink-0">close</span>
                       <span className="font-mono text-xs text-text-muted">{feature}</span>
                     </li>
                   ))}
