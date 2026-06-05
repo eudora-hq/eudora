@@ -46,6 +46,11 @@ export default function AgentBuilder() {
   const [externalError, setExternalError] = useState('');
   const [externalLoading, setExternalLoading] = useState(false);
   const [proxyResult, setProxyResult] = useState(null);
+  const [ownerType, setOwnerType] = useState('human');
+  const [ownerAgentId, setOwnerAgentId] = useState('');
+  const [externalOwnerType, setExternalOwnerType] = useState('human');
+  const [externalOwnerAgentId, setExternalOwnerAgentId] = useState('');
+  const [availableAgents, setAvailableAgents] = useState([]);
 
   useEffect(() => {
     let isMounted = true;
@@ -99,6 +104,23 @@ export default function AgentBuilder() {
     navigate('/agents', { replace: true, state: null });
   }, [location.state, navigate]);
 
+  useEffect(() => {
+    if (ownerType !== 'agent' && externalOwnerType !== 'agent') return;
+    let isMounted = true;
+
+    api.get('/agents')
+      .then((res) => {
+        if (isMounted) setAvailableAgents(res.data || []);
+      })
+      .catch(() => {
+        if (isMounted) setAvailableAgents([]);
+      });
+
+    return () => {
+      isMounted = false;
+    };
+  }, [ownerType, externalOwnerType]);
+
   const handleDeploy = async () => {
     if (!cmdInput.trim()) return;
     const firstKey = apiKeys[0];
@@ -125,6 +147,8 @@ export default function AgentBuilder() {
       });
       setFormMode('create');
       setEditingAgentId(null);
+      setOwnerType('human');
+      setOwnerAgentId('');
     } catch (err) {
       setFormError(err.response?.data?.error || 'Unable to build agent');
     } finally {
@@ -133,6 +157,16 @@ export default function AgentBuilder() {
   };
 
   const handleCreateAgent = async () => {
+    const currentUserId = user?.id || user?.userId;
+    if (ownerType === 'agent' && !ownerAgentId) {
+      setFormError('Please select an owner agent');
+      return;
+    }
+    if (ownerType === 'human' && !currentUserId) {
+      setFormError('Current user owner could not be resolved');
+      return;
+    }
+
     setIsDeploying(true);
     setFormError('');
 
@@ -144,8 +178,10 @@ export default function AgentBuilder() {
         model_provider: selectedKey?.provider || reviewForm.modelProvider,
         api_key_id: reviewForm.apiKeyId || null,
         system_prompt: reviewForm.systemPrompt,
+        owner_type: ownerType,
+        owner_id: ownerType === 'human' ? currentUserId : ownerAgentId,
       });
-      useAgentStore.getState().addAgent(normalizeAgent(res.data));
+      useAgentStore.getState().addAgent(normalizeAgent(withOwnerDisplay(res.data, ownerType, ownerAgentId, availableAgents, user)));
       closeForm();
       setCmdInput('');
     } catch (err) {
@@ -162,6 +198,8 @@ export default function AgentBuilder() {
     setFormMode(null);
     setEditingAgentId(null);
     setFormError('');
+    setOwnerType('human');
+    setOwnerAgentId('');
     setReviewForm({
       name: '',
       purpose: '',
@@ -176,6 +214,8 @@ export default function AgentBuilder() {
     setShowExternalModal(true);
     setExternalError('');
     setProxyResult(null);
+    setExternalOwnerType('human');
+    setExternalOwnerAgentId('');
     setExternalForm({
       name: '',
       purpose: '',
@@ -189,11 +229,17 @@ export default function AgentBuilder() {
     setExternalError('');
     setProxyResult(null);
     setExternalLoading(false);
+    setExternalOwnerType('human');
+    setExternalOwnerAgentId('');
   };
 
   const handleRegisterExternalAgent = async () => {
     const ownerId = user?.id || user?.userId;
-    if (!ownerId) {
+    if (externalOwnerType === 'agent' && !externalOwnerAgentId) {
+      setExternalError('Please select an owner agent');
+      return;
+    }
+    if (externalOwnerType === 'human' && !ownerId) {
       setExternalError('Current user owner could not be resolved');
       return;
     }
@@ -205,13 +251,19 @@ export default function AgentBuilder() {
       const res = await api.post('/agents/register', {
         name: externalForm.name,
         purpose: externalForm.purpose,
-        ownerType: 'human',
-        ownerId,
+        ownerType: externalOwnerType,
+        ownerId: externalOwnerType === 'human' ? ownerId : externalOwnerAgentId,
         providerHint: externalForm.providerHint,
         interceptionMode: externalForm.interceptionMode,
       });
       const agentRes = await api.get(`/agents/${res.data.agentId}`);
-      useAgentStore.getState().addAgent(normalizeAgent(agentRes.data));
+      useAgentStore.getState().addAgent(normalizeAgent(withOwnerDisplay(
+        agentRes.data,
+        externalOwnerType,
+        externalOwnerAgentId,
+        availableAgents,
+        user
+      )));
       setProxyResult(res.data);
     } catch (err) {
       setExternalError(err.response?.data?.message || err.response?.data?.error || 'Unable to register external agent');
@@ -233,6 +285,8 @@ export default function AgentBuilder() {
     setFormMode('create');
     setEditingAgentId(null);
     setFormError('');
+    setOwnerType('human');
+    setOwnerAgentId('');
     setReviewForm({
       name: template.name.toUpperCase(),
       purpose: template.description,
@@ -323,6 +377,8 @@ export default function AgentBuilder() {
     setPrefilledTemplate(null);
     setEditingAgentId(null);
     setFormError('');
+    setOwnerType('human');
+    setOwnerAgentId('');
     setReviewForm({
       name: '',
       purpose: '',
@@ -486,6 +542,15 @@ export default function AgentBuilder() {
                   ></textarea>
                 </div>
               )}
+              {formMode === 'create' && (
+                <OwnershipSelector
+                  ownerType={ownerType}
+                  setOwnerType={setOwnerType}
+                  ownerAgentId={ownerAgentId}
+                  setOwnerAgentId={setOwnerAgentId}
+                  availableAgents={availableAgents}
+                />
+              )}
             </div>
             <div className="flex justify-end">
               <button
@@ -578,6 +643,13 @@ export default function AgentBuilder() {
               </div>
 
               <h3 className="font-mono text-[16px] xl:text-[18px] font-bold text-white uppercase tracking-tight mb-1">{agent.name}</h3>
+              <div className="font-mono text-[9px] text-text-muted/60 mt-1 mb-2">
+                {agent.owner_type === 'human' ? (
+                  <span>Owner: {agent.owner_email || 'You'}</span>
+                ) : (
+                  <span>Owner: {agent.owner_agent_name || agent.owner_id} →</span>
+                )}
+              </div>
               <p className="font-mono text-[9px] text-text-muted uppercase tracking-widest mb-6 border-b border-[#262626] pb-4">REF_ID: {agent.refId}</p>
 
               <div className="space-y-6 flex-1 mb-6">
@@ -722,6 +794,13 @@ export default function AgentBuilder() {
                         className="w-full bg-[#050505] border border-[#262626] text-white p-4 font-mono text-[13px] focus:border-primary resize-none"
                       ></textarea>
                     </div>
+                    <OwnershipSelector
+                      ownerType={ownerType}
+                      setOwnerType={setOwnerType}
+                      ownerAgentId={ownerAgentId}
+                      setOwnerAgentId={setOwnerAgentId}
+                      availableAgents={availableAgents}
+                    />
                   </div>
 
                   {formError && (
@@ -851,14 +930,13 @@ export default function AgentBuilder() {
                       </button>
                     ))}
                   </div>
-                  <div className="space-y-2 col-span-2">
-                    <label className="font-mono text-[10px] text-primary uppercase tracking-[0.15em] block">OWNER</label>
-                    <input
-                      readOnly
-                      value={user?.name || user?.email || user?.id || 'Current user'}
-                      className="w-full bg-[#050505] border border-[#262626] text-text-muted px-4 py-3 font-mono text-[13px]"
-                    />
-                  </div>
+                  <OwnershipSelector
+                    ownerType={externalOwnerType}
+                    setOwnerType={setExternalOwnerType}
+                    ownerAgentId={externalOwnerAgentId}
+                    setOwnerAgentId={setExternalOwnerAgentId}
+                    availableAgents={availableAgents}
+                  />
                 </div>
 
                 {externalError && (
@@ -915,6 +993,89 @@ function normalizeAgent(agent) {
     agentType: agent.agent_type || 'internal',
     systemPrompt: agent.system_prompt,
   };
+}
+
+function withOwnerDisplay(agent, ownerType, ownerAgentId, availableAgents, user) {
+  if (ownerType === 'human') {
+    return {
+      ...agent,
+      owner_type: 'human',
+      owner_email: user?.email || user?.name || agent.owner_email,
+    };
+  }
+
+  const ownerAgent = availableAgents.find((availableAgent) => availableAgent.id === ownerAgentId);
+  return {
+    ...agent,
+    owner_type: 'agent',
+    owner_agent_name: ownerAgent?.name || agent.owner_agent_name,
+  };
+}
+
+function OwnershipSelector({ ownerType, setOwnerType, ownerAgentId, setOwnerAgentId, availableAgents }) {
+  return (
+    <div className="space-y-2 col-span-2">
+      <label className="font-mono text-[10px] text-text-muted uppercase tracking-widest">
+        OWNER
+      </label>
+      <div className="flex gap-2">
+        <button
+          type="button"
+          onClick={() => {
+            setOwnerType('human');
+            setOwnerAgentId('');
+          }}
+          className={`flex-1 font-mono text-[10px] uppercase tracking-widest py-2 border transition-colors cursor-pointer ${
+            ownerType === 'human'
+              ? 'border-primary text-primary bg-primary/10'
+              : 'border-[#262626] text-text-muted hover:border-text-muted'
+          }`}
+        >
+          Human (you)
+        </button>
+        <button
+          type="button"
+          onClick={() => setOwnerType('agent')}
+          className={`flex-1 font-mono text-[10px] uppercase tracking-widest py-2 border transition-colors cursor-pointer ${
+            ownerType === 'agent'
+              ? 'border-primary text-primary bg-primary/10'
+              : 'border-[#262626] text-text-muted hover:border-text-muted'
+          }`}
+        >
+          Agent
+        </button>
+      </div>
+
+      {ownerType === 'agent' && (
+        <div className="space-y-1">
+          <label className="font-mono text-[9px] text-text-muted uppercase tracking-widest">
+            Select owner agent
+          </label>
+          {availableAgents.length === 0 ? (
+            <p className="font-mono text-[10px] text-text-muted">
+              No agents available. Create an agent first.
+            </p>
+          ) : (
+            <select
+              value={ownerAgentId}
+              onChange={(event) => setOwnerAgentId(event.target.value)}
+              className="w-full bg-[#050505] border border-[#262626] text-white font-mono text-[11px] px-3 py-2 focus:outline-none focus:border-primary"
+            >
+              <option value="">Select an agent...</option>
+              {availableAgents.map((agent) => (
+                <option key={agent.id} value={agent.id}>
+                  {agent.name}
+                </option>
+              ))}
+            </select>
+          )}
+          <p className="font-mono text-[9px] text-text-muted/60">
+            The selected agent&apos;s human owner will be accountable for this agent&apos;s actions.
+          </p>
+        </div>
+      )}
+    </div>
+  );
 }
 
 function formatRelativeTime(timestamp) {

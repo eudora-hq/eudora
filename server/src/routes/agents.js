@@ -28,9 +28,23 @@ export default async function agentsRoutes(fastify) {
 
   // List all agents for tenant
   fastify.get('/', async (request) => {
-    return db.prepare(
-      'SELECT * FROM agents WHERE tenant_id = ? ORDER BY created_at DESC'
-    ).all(request.tenantId).map(redactAgentSecrets)
+    try {
+      return db.prepare(`
+        SELECT a.*,
+          u.email AS owner_email,
+          pa.name AS owner_agent_name
+        FROM agents a
+        LEFT JOIN users u ON a.owner_type = 'human' AND u.id = a.owner_id AND u.tenant_id = a.tenant_id
+        LEFT JOIN agents pa ON a.owner_type = 'agent' AND pa.id = a.owner_id AND pa.tenant_id = a.tenant_id
+        WHERE a.tenant_id = ?
+        ORDER BY a.created_at DESC
+      `).all(request.tenantId).map(redactAgentSecrets)
+    } catch (err) {
+      if (!String(err.message || '').includes('no such column')) throw err
+      return db.prepare(
+        'SELECT * FROM agents WHERE tenant_id = ? ORDER BY created_at DESC'
+      ).all(request.tenantId).map(redactAgentSecrets)
+    }
   })
 
   // POST /agents/register — register an external agent
