@@ -5,6 +5,11 @@ import { Link, useLocation, useNavigate } from 'react-router-dom';
 import api from '../api/client';
 import { TemplateGallery } from '../components/TemplateGallery';
 
+const DEFAULT_SCOPE_POLICY = {
+  allowed: ['compliance', 'document_qa', 'code_review'],
+  blocked: ['financial_advice', 'medical_advice', 'legal_advice'],
+};
+
 export default function AgentBuilder() {
   const { agents } = useAgentStore();
   const { user } = useAuthStore();
@@ -25,6 +30,7 @@ export default function AgentBuilder() {
     systemPrompt: '',
     apiKeyId: '',
     modelProvider: '',
+    scopePolicy: JSON.stringify(DEFAULT_SCOPE_POLICY, null, 2),
   });
   const [formError, setFormError] = useState('');
   const [filter, setFilter] = useState('ALL');
@@ -115,6 +121,7 @@ export default function AgentBuilder() {
         systemPrompt: res.data.systemPrompt || '',
         apiKeyId: firstKey.id,
         modelProvider: firstKey.provider,
+        scopePolicy: JSON.stringify(DEFAULT_SCOPE_POLICY, null, 2),
       });
       setFormMode('create');
       setEditingAgentId(null);
@@ -161,6 +168,7 @@ export default function AgentBuilder() {
       systemPrompt: '',
       apiKeyId: apiKeys[0]?.id || '',
       modelProvider: apiKeys[0]?.provider || '',
+      scopePolicy: JSON.stringify(DEFAULT_SCOPE_POLICY, null, 2),
     });
   };
 
@@ -231,6 +239,7 @@ export default function AgentBuilder() {
       systemPrompt: template.systemPrompt,
       apiKeyId: firstKey?.id || '',
       modelProvider: firstKey?.provider || '',
+      scopePolicy: JSON.stringify(DEFAULT_SCOPE_POLICY, null, 2),
     });
   };
 
@@ -244,6 +253,7 @@ export default function AgentBuilder() {
       systemPrompt: agent.systemPrompt || '',
       apiKeyId: agent.api_key_id || '',
       modelProvider: agent.provider || agent.model || '',
+      scopePolicy: formatScopePolicy(agent.scope_policy),
     });
   };
 
@@ -253,6 +263,7 @@ export default function AgentBuilder() {
     setFormError('');
 
     try {
+      const scopePolicy = parseScopePolicy(reviewForm.scopePolicy);
       const selectedKey = apiKeys.find((key) => key.id === reviewForm.apiKeyId);
       const res = await api.patch(`/agents/${editingAgentId}`, {
         name: reviewForm.name,
@@ -261,12 +272,36 @@ export default function AgentBuilder() {
         api_key_id: reviewForm.apiKeyId || null,
         system_prompt: reviewForm.systemPrompt,
       });
-      useAgentStore.getState().updateAgent(editingAgentId, normalizeAgent(res.data));
+      const scopeRes = await api.patch(`/agents/${editingAgentId}/scope-policy`, { scopePolicy });
+      useAgentStore.getState().updateAgent(editingAgentId, normalizeAgent({
+        ...res.data,
+        scope_policy: JSON.stringify(scopeRes.data.scopePolicy),
+      }));
       closeForm();
     } catch (err) {
-      setFormError(err.response?.data?.error || 'Unable to update agent');
+      setFormError(err.message === 'invalid_scope_policy'
+        ? 'Scope policy must be valid JSON'
+        : err.response?.data?.error || 'Unable to update agent');
     } finally {
       setIsDeploying(false);
+    }
+  };
+
+  const handleSubmitForApproval = async (agent) => {
+    try {
+      const res = await api.post(`/agents/${agent.id}/submit-for-approval`);
+      useAgentStore.getState().updateAgent(agent.id, { status: res.data.status });
+    } catch (err) {
+      setFormError(err.response?.data?.error || 'Unable to submit agent for approval');
+    }
+  };
+
+  const handleApproveAgent = async (agent) => {
+    try {
+      const res = await api.post(`/agents/${agent.id}/approve`);
+      useAgentStore.getState().updateAgent(agent.id, { status: res.data.status });
+    } catch (err) {
+      setFormError(err.response?.data?.error || 'Unable to approve agent');
     }
   };
 
@@ -294,11 +329,17 @@ export default function AgentBuilder() {
       systemPrompt: '',
       apiKeyId: '',
       modelProvider: '',
+      scopePolicy: JSON.stringify(DEFAULT_SCOPE_POLICY, null, 2),
     });
   };
 
   const filteredAgents = agents
-    .filter(a => filter === 'ALL' ? true : a.status.toUpperCase() === filter)
+    .filter(a => {
+      if (filter === 'ALL') return true;
+      const status = String(a.status || 'live').toUpperCase();
+      if (filter === 'ACTIVE') return status === 'ACTIVE' || status === 'LIVE';
+      return status === filter;
+    })
     .sort((a, b) => {
       if (sort === 'NAME') return a.name.localeCompare(b.name);
       if (sort === 'MODEL') return a.model.localeCompare(b.model);
@@ -434,6 +475,17 @@ export default function AgentBuilder() {
                   className="w-full bg-[#0a0a0a] border border-[#262626] text-white p-4 font-mono text-[13px] focus:border-primary resize-none"
                 ></textarea>
               </div>
+              {formMode === 'edit' && (
+                <div className="space-y-2 col-span-2">
+                  <label className="font-mono text-[10px] text-primary uppercase tracking-[0.15em] block">SCOPE_POLICY_JSON</label>
+                  <textarea
+                    rows={6}
+                    value={reviewForm.scopePolicy}
+                    onChange={(e) => setReviewForm((form) => ({ ...form, scopePolicy: e.target.value }))}
+                    className="w-full bg-[#0a0a0a] border border-[#262626] text-white p-4 font-mono text-[12px] focus:border-primary resize-none"
+                  ></textarea>
+                </div>
+              )}
             </div>
             <div className="flex justify-end">
               <button
@@ -520,6 +572,7 @@ export default function AgentBuilder() {
                       EXTERNAL
                     </span>
                   )}
+                  {getStatusBadge(agent.status)}
                 </div>
                 <span className="font-mono text-[9px] text-text-muted uppercase tracking-widest">{formatRelativeTime(agent.created_at)}</span>
               </div>
@@ -540,7 +593,7 @@ export default function AgentBuilder() {
                   </div>
                   <div>
                     <p className="font-mono text-[9px] text-primary uppercase tracking-widest mb-1">STATUS</p>
-                    <span className="font-mono text-[9px] uppercase text-primary font-bold tracking-widest">ACTIVE</span>
+                    <span className="font-mono text-[9px] uppercase text-primary font-bold tracking-widest">{formatStatus(agent.status)}</span>
                   </div>
                 </div>
 
@@ -556,6 +609,22 @@ export default function AgentBuilder() {
               >
                 ACCESS INTERFACE
               </button>
+              {String(agent.status || 'live') === 'draft' && (
+                <button
+                  onClick={() => handleSubmitForApproval(agent)}
+                  className="w-full py-3 mt-3 border border-warning/40 text-warning hover:border-warning hover:text-warning font-mono text-[10px] font-bold uppercase tracking-widest transition-colors cursor-pointer"
+                >
+                  SUBMIT FOR APPROVAL
+                </button>
+              )}
+              {String(agent.status || 'live') === 'pending_approval' && isCurrentUserOwner(agent, user) && (
+                <button
+                  onClick={() => handleApproveAgent(agent)}
+                  className="w-full py-3 mt-3 border border-primary/40 text-primary hover:border-primary hover:text-primary font-mono text-[10px] font-bold uppercase tracking-widest transition-colors cursor-pointer"
+                >
+                  APPROVE
+                </button>
+              )}
               <button 
                  onClick={() => navigate(`/agents/${agent.id}/context`)}
                 className="w-full py-3 mt-3 border border-[#262626] text-text-muted hover:border-primary hover:text-white font-mono text-[10px] font-bold uppercase tracking-widest transition-colors cursor-pointer"
@@ -841,7 +910,7 @@ function normalizeAgent(agent) {
     created_at: agent.created_at,
     level: '1',
     knowledge: 'Base_Vectors',
-    status: agent.status || 'active',
+    status: agent.status || 'live',
     provider: agent.provider_hint || agent.model_provider,
     agentType: agent.agent_type || 'internal',
     systemPrompt: agent.system_prompt,
@@ -859,4 +928,47 @@ function formatRelativeTime(timestamp) {
   if (diff < hour) return `${Math.floor(diff / minute)}M AGO`;
   if (diff < day) return `${Math.floor(diff / hour)}H AGO`;
   return `${Math.floor(diff / day)}D AGO`;
+}
+
+function formatScopePolicy(value) {
+  if (!value) return JSON.stringify(DEFAULT_SCOPE_POLICY, null, 2);
+  try {
+    return JSON.stringify(typeof value === 'string' ? JSON.parse(value) : value, null, 2);
+  } catch {
+    return JSON.stringify(DEFAULT_SCOPE_POLICY, null, 2);
+  }
+}
+
+function parseScopePolicy(value) {
+  try {
+    return value ? JSON.parse(value) : {};
+  } catch {
+    throw new Error('invalid_scope_policy');
+  }
+}
+
+function formatStatus(status) {
+  return String(status || 'live').replaceAll('_', ' ').toUpperCase();
+}
+
+function isCurrentUserOwner(agent, user) {
+  const currentUserId = user?.id || user?.userId;
+  return Boolean(currentUserId && agent.owner_id === currentUserId);
+}
+
+function getStatusBadge(status) {
+  const normalised = String(status || 'live');
+  if (normalised === 'live') return null;
+
+  const styles = {
+    draft: 'border-[#404040] bg-[#262626]/40 text-text-muted',
+    pending_approval: 'border-warning/40 bg-warning/10 text-warning',
+    suspended: 'border-danger/40 bg-danger/10 text-danger',
+  };
+
+  return (
+    <span className={`border px-2 py-1 font-mono text-[9px] uppercase font-bold tracking-widest ${styles[normalised] || styles.draft}`}>
+      {formatStatus(normalised)}
+    </span>
+  );
 }

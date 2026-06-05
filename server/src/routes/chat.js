@@ -31,6 +31,12 @@ export default async function chatRoutes(fastify) {
       .prepare('SELECT * FROM agents WHERE id = ? AND tenant_id = ?')
       .get(agentId, request.tenantId)
     if (!agent) return reply.code(404).send({ error: 'agent_not_found' })
+    if (agent.status && agent.status !== 'live') {
+      return reply.code(403).send({
+        error: 'agent_not_live',
+        message: `Agent status is '${agent.status}'. Agent must be approved before use.`,
+      })
+    }
 
     if (!isUnderLimit(db, request.tenantId, request.tenant.plan, 'messages_per_day')) {
       return reply.code(429).send({ error: 'daily_limit_reached', upgradeUrl: '/billing' })

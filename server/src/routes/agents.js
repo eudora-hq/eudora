@@ -158,6 +158,82 @@ export default async function agentsRoutes(fastify) {
     }
   })
 
+  // POST /agents/:id/submit-for-approval
+  fastify.post('/:id/submit-for-approval', async (request, reply) => {
+    const agent = db.prepare(
+      'SELECT * FROM agents WHERE id = ? AND tenant_id = ?'
+    ).get(request.params.id, request.tenantId)
+
+    if (!agent) return reply.code(404).send({ error: 'not_found' })
+
+    db.prepare(
+      'UPDATE agents SET status = ? WHERE id = ? AND tenant_id = ?'
+    ).run('pending_approval', request.params.id, request.tenantId)
+
+    log({
+      tenantId: request.tenantId,
+      userId: request.user.userId,
+      action: 'agent_submitted_for_approval',
+      riskScore: 0,
+      metadata: { agentId: agent.id },
+      initiatedByUserId: request.user.userId,
+      agentChain: [agent.id],
+    }, db)
+
+    return { status: 'pending_approval' }
+  })
+
+  // POST /agents/:id/approve
+  fastify.post('/:id/approve', async (request, reply) => {
+    const agent = db.prepare(
+      'SELECT * FROM agents WHERE id = ? AND tenant_id = ?'
+    ).get(request.params.id, request.tenantId)
+
+    if (!agent) return reply.code(404).send({ error: 'not_found' })
+    if (agent.status !== 'pending_approval') {
+      return reply.code(400).send({
+        error: 'not_pending',
+        message: 'Agent must be pending_approval to approve',
+      })
+    }
+
+    db.prepare(
+      'UPDATE agents SET status = ? WHERE id = ? AND tenant_id = ?'
+    ).run('live', request.params.id, request.tenantId)
+
+    log({
+      tenantId: request.tenantId,
+      userId: request.user.userId,
+      action: 'agent_approved',
+      riskScore: 0,
+      metadata: {
+        agentId: agent.id,
+        approvedBy: request.user.userId,
+        approvedAt: Date.now(),
+      },
+      initiatedByUserId: request.user.userId,
+      agentChain: [agent.id],
+    }, db)
+
+    return { status: 'live' }
+  })
+
+  // PATCH /agents/:id/scope-policy
+  fastify.patch('/:id/scope-policy', async (request, reply) => {
+    const { scopePolicy } = request.body || {}
+    const agent = db.prepare(
+      'SELECT * FROM agents WHERE id = ? AND tenant_id = ?'
+    ).get(request.params.id, request.tenantId)
+
+    if (!agent) return reply.code(404).send({ error: 'not_found' })
+
+    db.prepare(
+      'UPDATE agents SET scope_policy = ? WHERE id = ? AND tenant_id = ?'
+    ).run(JSON.stringify(scopePolicy || {}), request.params.id, request.tenantId)
+
+    return { scopePolicy: scopePolicy || {} }
+  })
+
   // Get single agent
   fastify.get('/:id', async (request, reply) => {
     const agent = db.prepare(
