@@ -10,6 +10,7 @@ export function TierGate({ feature, message, children }) {
   const GATED_FEATURES = {
     workflow_builder: ['team', 'pro', 'enterprise'],
     audit_export: ['pro', 'enterprise'],
+    compliance_reports: ['enterprise'],
     team_members: ['team', 'pro', 'enterprise'],
   }
 

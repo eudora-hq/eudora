@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { format } from 'date-fns';
 import api from '../api/client';
+import { TierGate } from '../components/TierGate';
 
 const ACTIONS = [
   'chat_message',
@@ -28,6 +29,15 @@ export default function AuditLog() {
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState('');
   const [showUpgrade, setShowUpgrade] = useState(false);
+  const [agents, setAgents] = useState([]);
+  const [reports, setReports] = useState([]);
+  const [reportForm, setReportForm] = useState({
+    dateFrom: formatDateInput(Date.now() - 30 * 24 * 60 * 60 * 1000),
+    dateTo: formatDateInput(Date.now()),
+    agentId: '',
+  });
+  const [reportError, setReportError] = useState('');
+  const [reportLoading, setReportLoading] = useState(false);
 
   const fetchAudit = async (nextPage = page) => {
     setIsLoading(true);
@@ -59,6 +69,10 @@ export default function AuditLog() {
     return () => clearInterval(interval);
   }, [action, minRiskScore]);
 
+  useEffect(() => {
+    fetchReportContext();
+  }, []);
+
   const clearFilters = () => {
     setAction('');
     setMinRiskScore('');
@@ -75,6 +89,65 @@ export default function AuditLog() {
       } else {
         setError(err.response?.data?.error || 'Unable to export audit log');
       }
+    }
+  };
+
+  const fetchReportContext = async () => {
+    try {
+      const [agentsRes, reportsRes] = await Promise.all([
+        api.get('/agents'),
+        api.get('/reports').catch(() => ({ data: [] })),
+      ]);
+      setAgents(agentsRes.data || []);
+      setReports(reportsRes.data || []);
+    } catch {
+      setAgents([]);
+      setReports([]);
+    }
+  };
+
+  const downloadBlob = (blob, filename) => {
+    const url = window.URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = filename;
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+    window.URL.revokeObjectURL(url);
+  };
+
+  const handleGenerateReport = async () => {
+    setReportLoading(true);
+    setReportError('');
+
+    try {
+      const dateFrom = startOfDay(reportForm.dateFrom);
+      const dateTo = endOfDay(reportForm.dateTo);
+      const res = await api.post('/reports/generate', {
+        dateFrom,
+        dateTo,
+        ...(reportForm.agentId ? { agentId: reportForm.agentId } : {}),
+        format: 'pdf',
+      }, { responseType: 'blob' });
+      downloadBlob(res.data, 'eudora-compliance-report.pdf');
+      await fetchReportContext();
+    } catch (err) {
+      setReportError(err.response?.status === 403
+        ? 'Compliance reports are available on the Enterprise plan'
+        : 'Unable to generate compliance report');
+    } finally {
+      setReportLoading(false);
+    }
+  };
+
+  const handleDownloadReport = async (report) => {
+    setReportError('');
+    try {
+      const res = await api.get(`/reports/${report.id}`, { responseType: 'blob' });
+      downloadBlob(res.data, `eudora-compliance-report-${report.id}.pdf`);
+    } catch {
+      setReportError('Unable to download stored report');
     }
   };
 
@@ -121,6 +194,74 @@ export default function AuditLog() {
           {error}
         </div>
       )}
+
+      <TierGate feature="compliance_reports" message="Available on Enterprise plans">
+        <div className="border border-[#262626] bg-[#0a0a0a] p-6 lg:p-8 space-y-6">
+          <div className="flex items-start justify-between gap-6 border-b border-[#262626] pb-4">
+            <div>
+              <h2 className="font-mono text-[16px] text-primary uppercase font-bold tracking-widest">COMPLIANCE REPORTS</h2>
+              <p className="font-mono text-[10px] text-text-muted uppercase tracking-widest mt-2">DORA-ready signed PDF documents</p>
+            </div>
+            <button
+              onClick={handleGenerateReport}
+              disabled={reportLoading}
+              className="primary-btn relative bg-primary text-[#050505] py-3 px-6 font-mono text-[12px] font-bold uppercase tracking-[0.15em] transition-all overflow-hidden active:scale-[0.98] cursor-pointer disabled:opacity-50"
+            >
+              <span className="relative z-10">{reportLoading ? 'GENERATING...' : 'GENERATE REPORT'}</span>
+              <div className="scan-line"></div>
+            </button>
+          </div>
+
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+            <div className="space-y-2">
+              <label className="font-mono text-[10px] text-primary uppercase tracking-[0.15em] block">DATE FROM</label>
+              <input type="date" value={reportForm.dateFrom} onChange={(e) => setReportForm(form => ({ ...form, dateFrom: e.target.value }))} className="w-full bg-[#050505] border border-[#262626] text-white px-4 py-3 font-mono text-[13px] focus:border-primary" />
+            </div>
+            <div className="space-y-2">
+              <label className="font-mono text-[10px] text-primary uppercase tracking-[0.15em] block">DATE TO</label>
+              <input type="date" value={reportForm.dateTo} onChange={(e) => setReportForm(form => ({ ...form, dateTo: e.target.value }))} className="w-full bg-[#050505] border border-[#262626] text-white px-4 py-3 font-mono text-[13px] focus:border-primary" />
+            </div>
+            <div className="space-y-2">
+              <label className="font-mono text-[10px] text-primary uppercase tracking-[0.15em] block">AGENT</label>
+              <select value={reportForm.agentId} onChange={(e) => setReportForm(form => ({ ...form, agentId: e.target.value }))} className="w-full bg-[#050505] border border-[#262626] text-white px-4 py-3 font-mono text-[13px] focus:border-primary uppercase appearance-none cursor-pointer">
+                <option value="">ALL AGENTS</option>
+                {agents.map(agent => (
+                  <option key={agent.id} value={agent.id}>{agent.name}</option>
+                ))}
+              </select>
+            </div>
+          </div>
+
+          {reportError && (
+            <div className="border border-danger/30 bg-danger/10 text-danger font-mono text-[12px] uppercase tracking-widest p-3">
+              {reportError}
+            </div>
+          )}
+
+          <div className="border border-[#262626] bg-[#050505]">
+            <div className="grid grid-cols-[1fr_1fr_1.4fr_120px] gap-4 px-4 py-3 border-b border-[#262626]">
+              <span className="font-mono text-[9px] text-primary uppercase tracking-widest">Generated</span>
+              <span className="font-mono text-[9px] text-primary uppercase tracking-widest">Period</span>
+              <span className="font-mono text-[9px] text-primary uppercase tracking-widest">Hash</span>
+              <span className="font-mono text-[9px] text-primary uppercase tracking-widest"></span>
+            </div>
+            {reports.length === 0 ? (
+              <div className="p-4 text-center">
+                <span className="font-mono text-[10px] text-text-muted uppercase tracking-widest">NO COMPLIANCE REPORTS GENERATED</span>
+              </div>
+            ) : reports.map(report => (
+              <div key={report.id} className="grid grid-cols-[1fr_1fr_1.4fr_120px] gap-4 items-center px-4 py-3 border-b border-[#262626] last:border-b-0">
+                <span className="font-mono text-[10px] text-white uppercase tracking-widest">{formatTimestamp(report.generated_at)}</span>
+                <span className="font-mono text-[10px] text-text-muted uppercase tracking-widest">{formatShortDate(report.date_from)} — {formatShortDate(report.date_to)}</span>
+                <span className="font-mono text-[10px] text-text-muted truncate">{report.report_hash}</span>
+                <button onClick={() => handleDownloadReport(report)} className="border border-[#262626] text-text-muted hover:border-primary hover:text-white px-3 py-2 font-mono text-[9px] uppercase tracking-widest transition-colors cursor-pointer">
+                  DOWNLOAD
+                </button>
+              </div>
+            ))}
+          </div>
+        </div>
+      </TierGate>
 
       <div className="border border-[#262626] bg-[#0a0a0a] flex flex-col">
         <div className="grid grid-cols-[1.4fr_1fr_0.7fr_48px] gap-4 px-6 py-4 border-b border-[#262626] bg-[#050505]">
@@ -192,6 +333,30 @@ function formatTimestamp(timestamp) {
   } catch {
     return new Date(Number(timestamp)).toLocaleString();
   }
+}
+
+function formatDateInput(timestamp) {
+  return format(new Date(Number(timestamp)), 'yyyy-MM-dd');
+}
+
+function formatShortDate(timestamp) {
+  try {
+    return format(new Date(Number(timestamp)), 'yyyy-MM-dd');
+  } catch {
+    return new Date(Number(timestamp)).toLocaleDateString();
+  }
+}
+
+function startOfDay(dateValue) {
+  const date = new Date(dateValue);
+  date.setHours(0, 0, 0, 0);
+  return date.getTime();
+}
+
+function endOfDay(dateValue) {
+  const date = new Date(dateValue);
+  date.setHours(23, 59, 59, 999);
+  return date.getTime();
 }
 
 function actionClass(action) {

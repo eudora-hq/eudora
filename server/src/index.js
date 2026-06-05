@@ -23,6 +23,7 @@ import workflowsRoutes from './routes/workflows.js'
 import onboardingRoutes from './routes/onboarding.js'
 import accountRoutes from './routes/account.js'
 import proxyRoutes from './routes/proxy.js'
+import reportsRoutes from './routes/reports.js'
 import { loadAllJobs } from './scheduler/cronRunner.js'
 
 const PORT = process.env.PORT || 3001
@@ -104,6 +105,7 @@ async function start() {
   fastify.register(onboardingRoutes, { prefix: '/onboarding' })
   fastify.register(accountRoutes, { prefix: '/account' })
   fastify.register(proxyRoutes, { prefix: '/proxy' })
+  fastify.register(reportsRoutes, { prefix: '/reports' })
 
   fastify.get('/health', async () => ({ status: 'ok', ts: Date.now() }))
 

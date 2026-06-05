@@ -1,0 +1,155 @@
+import { describe, it, expect, beforeEach, afterEach } from 'vitest'
+import Fastify from 'fastify'
+import Database from 'better-sqlite3'
+import { existsSync, rmSync } from 'fs'
+import { readFileSync } from 'fs'
+import { resolve, dirname } from 'path'
+import { fileURLToPath } from 'url'
+import { nanoid } from 'nanoid'
+
+process.env.ENCRYPTION_KEY = '0'.repeat(64)
+process.env.SELF_HOSTED = 'false'
+process.env.JWT_SECRET = 'test-jwt-secret-32-chars-minimum!!'
+process.env.JWT_EXPIRES_IN = '15m'
+
+import { authenticate } from '../../middleware/auth.js'
+import { scopeToTenant } from '../../middleware/tenantScope.js'
+import { checkTrialExpiry } from '../../middleware/trialExpiry.js'
+import { generateAccessToken } from '../../utils/auth.js'
+import reportsRoutes from '../reports.js'
+
+const __dirname = dirname(fileURLToPath(import.meta.url))
+const migrations = ['001_initial_schema.sql', '002_agent_ownership.sql', '003_external_agents.sql', '004_pbac.sql', '005_reports.sql']
+  .map((file) => readFileSync(resolve(__dirname, '../../db/migrations', file), 'utf8'))
+const reportDir = resolve(__dirname, '../../../.compliance-reports')
+
+let app, db, tenantId, userId, agentId, token
+
+beforeEach(async () => {
+  process.env.SELF_HOSTED = 'false'
+  db = new Database(':memory:')
+  db.pragma('foreign_keys = ON')
+  migrations.forEach((sql) => db.exec(sql))
+
+  tenantId = nanoid()
+  userId = nanoid()
+  agentId = nanoid()
+
+  db.prepare(
+    'INSERT INTO tenants (id, name, plan, trial_ends_at, created_at) VALUES (?, ?, ?, ?, ?)'
+  ).run(tenantId, 'Reports Co', 'enterprise', null, Date.now())
+  db.prepare(
+    'INSERT INTO users (id, tenant_id, email, password_hash, role) VALUES (?, ?, ?, ?, ?)'
+  ).run(userId, tenantId, 'reports@test.com', 'hash', 'owner')
+  db.prepare(`
+    INSERT INTO agents (
+      id, tenant_id, name, purpose, model_provider, owner_type, owner_id,
+      owner_chain, status, created_at
+    )
+    VALUES (?, ?, 'Compliance Agent', 'DORA compliance review', 'anthropic', 'human', ?, '[]', 'live', ?)
+  `).run(agentId, tenantId, userId, Date.now())
+
+  const now = Date.now()
+  db.prepare(`
+    INSERT INTO audit_log
+      (id, tenant_id, user_id, action, risk_score, metadata, initiated_by_user_id, agent_chain, ts)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+  `).run(nanoid(), tenantId, userId, 'chat_message', 10, JSON.stringify({ agentId }), userId, JSON.stringify([agentId]), now - 1000)
+  db.prepare(`
+    INSERT INTO audit_log
+      (id, tenant_id, user_id, action, risk_score, metadata, initiated_by_user_id, agent_chain, ts)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+  `).run(nanoid(), tenantId, userId, 'guard_block', 80, JSON.stringify({ agentId }), userId, JSON.stringify([agentId]), now)
+
+  token = generateAccessToken({ userId, tenantId, role: 'owner' })
+
+  app = Fastify({ logger: false })
+  app.decorate('db', db)
+  app.addHook('preHandler', async (request, reply) => {
+    await authenticate(request, reply)
+    if (reply.sent) return
+    await new Promise((resolveHook) => scopeToTenant(request, reply, resolveHook))
+    if (reply.sent) return
+    await new Promise((resolveHook) => checkTrialExpiry(request, reply, resolveHook))
+  })
+  await app.register(reportsRoutes, { prefix: '/reports' })
+  await app.ready()
+})
+
+afterEach(async () => {
+  process.env.SELF_HOSTED = 'false'
+  if (app) await app.close()
+  if (db) db.close()
+  if (existsSync(reportDir)) rmSync(reportDir, { recursive: true, force: true })
+})
+
+function request(method, url, payload) {
+  return app.inject({
+    method,
+    url,
+    headers: { authorization: `Bearer ${token}` },
+    payload,
+  })
+}
+
+async function generateReport(overrides = {}) {
+  const now = Date.now()
+  return request('POST', '/reports/generate', {
+    dateFrom: now - 60 * 60 * 1000,
+    dateTo: now + 60 * 60 * 1000,
+    format: 'pdf',
+    ...overrides,
+  })
+}
+
+describe('reports routes', () => {
+  it('enterprise tenant can generate a PDF report and stores hash', async () => {
+    const res = await generateReport()
+
+    expect(res.statusCode).toBe(200)
+    expect(res.headers['content-type']).toContain('application/pdf')
+    expect(res.rawPayload.length).toBeGreaterThan(0)
+
+    const reportId = res.headers['x-report-id']
+    const row = db.prepare('SELECT * FROM compliance_reports WHERE id = ?').get(reportId)
+    expect(row.report_hash).toBe(res.headers['x-report-hash'])
+    expect(row.tenant_id).toBe(tenantId)
+  })
+
+  it('GET /reports returns generated report metadata', async () => {
+    await generateReport({ agentId })
+    const res = await request('GET', '/reports')
+    const reports = JSON.parse(res.body)
+
+    expect(res.statusCode).toBe(200)
+    expect(reports).toHaveLength(1)
+    expect(reports[0].agent_id).toBe(agentId)
+  })
+
+  it('GET /reports/:id re-downloads the same PDF artifact', async () => {
+    const generated = await generateReport()
+    const reportId = generated.headers['x-report-id']
+
+    const res = await request('GET', `/reports/${reportId}`)
+    expect(res.statusCode).toBe(200)
+    expect(res.headers['x-report-hash']).toBe(generated.headers['x-report-hash'])
+    expect(Buffer.compare(res.rawPayload, generated.rawPayload)).toBe(0)
+  })
+
+  it('non-enterprise tenant receives 403', async () => {
+    db.prepare('UPDATE tenants SET plan = ? WHERE id = ?').run('pro', tenantId)
+    const res = await generateReport()
+
+    expect(res.statusCode).toBe(403)
+    expect(JSON.parse(res.body).error).toBe('upgrade_required')
+  })
+
+  it('SELF_HOSTED tenant can generate report regardless of plan', async () => {
+    process.env.SELF_HOSTED = 'true'
+    db.prepare('UPDATE tenants SET plan = ? WHERE id = ?').run('solo', tenantId)
+
+    const res = await generateReport()
+    expect(res.statusCode).toBe(200)
+    expect(res.headers['content-type']).toContain('application/pdf')
+  })
+})
