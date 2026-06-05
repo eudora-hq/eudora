@@ -22,6 +22,7 @@ import cronRoutes from './routes/cron.js'
 import workflowsRoutes from './routes/workflows.js'
 import onboardingRoutes from './routes/onboarding.js'
 import accountRoutes from './routes/account.js'
+import proxyRoutes from './routes/proxy.js'
 import { loadAllJobs } from './scheduler/cronRunner.js'
 
 const PORT = process.env.PORT || 3001
@@ -72,8 +73,10 @@ async function start() {
   ])
 
   fastify.addHook('preHandler', async (request, reply) => {
-    const key = `${request.method} ${request.url.split('?')[0]}`
+    const path = request.url.split('?')[0]
+    const key = `${request.method} ${path}`
     if (PUBLIC_ROUTES.has(key)) return
+    if (path.startsWith('/proxy/')) return
 
     // Chain: authenticate → scopeToTenant → checkTrialExpiry
     await authenticate(request, reply)
@@ -100,6 +103,7 @@ async function start() {
   fastify.register(workflowsRoutes, { prefix: '/workflows' })
   fastify.register(onboardingRoutes, { prefix: '/onboarding' })
   fastify.register(accountRoutes, { prefix: '/account' })
+  fastify.register(proxyRoutes, { prefix: '/proxy' })
 
   fastify.get('/health', async () => ({ status: 'ok', ts: Date.now() }))
 
