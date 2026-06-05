@@ -1,5 +1,26 @@
 import { nanoid } from 'nanoid'
+import { log } from '../audit/auditLogger.js'
+import { encrypt } from '../utils/encryption.js'
 import { validateOwnership } from '../utils/ownershipChain.js'
+
+const INTERCEPTION_MODES = new Set(['block', 'observe', 'report_only'])
+const PROXY_KEY_PREFIX_LENGTH = 24
+
+function redactAgentSecrets(agent) {
+  if (!agent) return agent
+  const safeAgent = { ...agent }
+  delete safeAgent.proxy_key_encrypted
+  delete safeAgent.proxy_key_iv
+  return safeAgent
+}
+
+function generateProxyKey() {
+  const rawKey = `eudora-proxy-${nanoid(32)}`
+  return {
+    rawKey,
+    prefix: rawKey.substring(0, PROXY_KEY_PREFIX_LENGTH),
+  }
+}
 
 export default async function agentsRoutes(fastify) {
   const db = fastify.db
@@ -8,7 +29,133 @@ export default async function agentsRoutes(fastify) {
   fastify.get('/', async (request) => {
     return db.prepare(
       'SELECT * FROM agents WHERE tenant_id = ? ORDER BY created_at DESC'
-    ).all(request.tenantId)
+    ).all(request.tenantId).map(redactAgentSecrets)
+  })
+
+  // POST /agents/register — register an external agent
+  fastify.post('/register', async (request, reply) => {
+    const {
+      name,
+      purpose,
+      ownerType,
+      ownerId,
+      providerHint,
+      interceptionMode,
+      apiKeyId,
+    } = request.body
+
+    if (!name || !purpose || !ownerType || !ownerId) {
+      return reply.code(400).send({
+        error: 'missing_fields',
+        message: 'name, purpose, ownerType, ownerId required',
+      })
+    }
+
+    const mode = interceptionMode || 'observe'
+    if (!INTERCEPTION_MODES.has(mode)) {
+      return reply.code(400).send({ error: 'invalid_interception_mode' })
+    }
+
+    const ownership = validateOwnership(
+      db,
+      ownerId,
+      ownerType,
+      request.tenantId,
+      null
+    )
+
+    if (!ownership.valid) {
+      return reply.code(400).send({
+        error: ownership.code || 'invalid_ownership',
+        message: ownership.error || 'Invalid ownership assignment',
+      })
+    }
+
+    const agentId = nanoid()
+    const { rawKey, prefix } = generateProxyKey()
+    const { ciphertext, iv } = encrypt(rawKey)
+    const now = Date.now()
+    const resolvedProvider = providerHint || 'openai'
+
+    db.prepare(`
+      INSERT INTO agents (
+        id, tenant_id, name, purpose, model_provider, api_key_id,
+        agent_type, proxy_key_encrypted, proxy_key_iv, proxy_key_prefix,
+        provider_hint, interception_mode, status, owner_type, owner_id,
+        owner_chain, created_at
+      )
+      VALUES (?, ?, ?, ?, ?, ?, 'external', ?, ?, ?, ?, ?, 'live', ?, ?, ?, ?)
+    `).run(
+      agentId,
+      request.tenantId,
+      name,
+      purpose,
+      resolvedProvider,
+      apiKeyId || null,
+      ciphertext,
+      iv,
+      prefix,
+      resolvedProvider,
+      mode,
+      ownerType,
+      ownerId,
+      JSON.stringify(ownership.chain),
+      now
+    )
+
+    log({
+      tenantId: request.tenantId,
+      userId: request.user.userId,
+      action: 'agent_registered_external',
+      riskScore: 0,
+      metadata: { name, providerHint: resolvedProvider, interceptionMode: mode, agentId },
+      initiatedByUserId: request.user.userId,
+      agentChain: [agentId],
+    }, db)
+
+    return reply.code(201).send({
+      agentId,
+      proxyKey: rawKey,
+      prefix,
+      message: 'Store this proxy key securely. It will not be shown again.',
+    })
+  })
+
+  // POST /agents/:id/proxy-key/rotate — rotate proxy key
+  fastify.post('/:id/proxy-key/rotate', async (request, reply) => {
+    const agent = db.prepare(
+      'SELECT * FROM agents WHERE id = ? AND tenant_id = ?'
+    ).get(request.params.id, request.tenantId)
+
+    if (!agent) return reply.code(404).send({ error: 'not_found' })
+    if (agent.agent_type !== 'external') {
+      return reply.code(400).send({ error: 'not_external_agent' })
+    }
+
+    const { rawKey, prefix } = generateProxyKey()
+    const { ciphertext, iv } = encrypt(rawKey)
+
+    db.prepare(`
+      UPDATE agents
+      SET proxy_key_encrypted = ?, proxy_key_iv = ?, proxy_key_prefix = ?
+      WHERE id = ? AND tenant_id = ?
+    `).run(ciphertext, iv, prefix, request.params.id, request.tenantId)
+
+    log({
+      tenantId: request.tenantId,
+      userId: request.user.userId,
+      action: 'agent_proxy_key_rotated',
+      riskScore: 0,
+      metadata: { agentId: request.params.id },
+      initiatedByUserId: request.user.userId,
+      agentChain: [request.params.id],
+    }, db)
+
+    return {
+      proxyKey: rawKey,
+      prefix,
+      message: 'Old key immediately invalid.',
+    }
   })
 
   // Get single agent
@@ -17,7 +164,7 @@ export default async function agentsRoutes(fastify) {
       'SELECT * FROM agents WHERE id = ? AND tenant_id = ?'
     ).get(request.params.id, request.tenantId)
     if (!agent) return reply.code(404).send({ error: 'agent_not_found' })
-    return agent
+    return redactAgentSecrets(agent)
   })
 
   // Create agent
@@ -78,9 +225,9 @@ export default async function agentsRoutes(fastify) {
       Date.now()
     )
 
-    return reply.code(201).send(
+    return reply.code(201).send(redactAgentSecrets(
       db.prepare('SELECT * FROM agents WHERE id = ?').get(id)
-    )
+    ))
   })
 
   // Update agent
@@ -156,7 +303,9 @@ export default async function agentsRoutes(fastify) {
       )
     }
 
-    return db.prepare('SELECT * FROM agents WHERE id = ?').get(request.params.id)
+    return redactAgentSecrets(
+      db.prepare('SELECT * FROM agents WHERE id = ?').get(request.params.id)
+    )
   })
 
   // Delete agent

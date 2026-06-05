@@ -1,11 +1,13 @@
 import { useState, useEffect } from 'react';
 import { useAgentStore } from '../store/agentStore';
+import { useAuthStore } from '../store/authStore';
 import { Link, useLocation, useNavigate } from 'react-router-dom';
 import api from '../api/client';
 import { TemplateGallery } from '../components/TemplateGallery';
 
 export default function AgentBuilder() {
   const { agents } = useAgentStore();
+  const { user } = useAuthStore();
   const navigate = useNavigate();
   const location = useLocation();
   
@@ -28,6 +30,16 @@ export default function AgentBuilder() {
   const [filter, setFilter] = useState('ALL');
   const [sort, setSort] = useState('LEVEL');
   const [logs, setLogs] = useState([]);
+  const [showExternalModal, setShowExternalModal] = useState(false);
+  const [externalForm, setExternalForm] = useState({
+    name: '',
+    purpose: '',
+    providerHint: 'openai',
+    interceptionMode: 'observe',
+  });
+  const [externalError, setExternalError] = useState('');
+  const [externalLoading, setExternalLoading] = useState(false);
+  const [proxyResult, setProxyResult] = useState(null);
 
   useEffect(() => {
     let isMounted = true;
@@ -150,6 +162,59 @@ export default function AgentBuilder() {
       apiKeyId: apiKeys[0]?.id || '',
       modelProvider: apiKeys[0]?.provider || '',
     });
+  };
+
+  const openExternalModal = () => {
+    setShowExternalModal(true);
+    setExternalError('');
+    setProxyResult(null);
+    setExternalForm({
+      name: '',
+      purpose: '',
+      providerHint: 'openai',
+      interceptionMode: 'observe',
+    });
+  };
+
+  const closeExternalModal = () => {
+    setShowExternalModal(false);
+    setExternalError('');
+    setProxyResult(null);
+    setExternalLoading(false);
+  };
+
+  const handleRegisterExternalAgent = async () => {
+    const ownerId = user?.id || user?.userId;
+    if (!ownerId) {
+      setExternalError('Current user owner could not be resolved');
+      return;
+    }
+
+    setExternalLoading(true);
+    setExternalError('');
+
+    try {
+      const res = await api.post('/agents/register', {
+        name: externalForm.name,
+        purpose: externalForm.purpose,
+        ownerType: 'human',
+        ownerId,
+        providerHint: externalForm.providerHint,
+        interceptionMode: externalForm.interceptionMode,
+      });
+      const agentRes = await api.get(`/agents/${res.data.agentId}`);
+      useAgentStore.getState().addAgent(normalizeAgent(agentRes.data));
+      setProxyResult(res.data);
+    } catch (err) {
+      setExternalError(err.response?.data?.message || err.response?.data?.error || 'Unable to register external agent');
+    } finally {
+      setExternalLoading(false);
+    }
+  };
+
+  const copyProxyKey = async () => {
+    if (!proxyResult?.proxyKey) return;
+    await navigator.clipboard.writeText(proxyResult.proxyKey);
   };
 
   const handleTemplateSelect = (template) => {
@@ -281,6 +346,12 @@ export default function AgentBuilder() {
             className="ml-auto border border-primary/30 text-primary hover:border-primary px-4 py-2 font-mono text-[9px] uppercase tracking-widest transition-colors cursor-pointer"
           >
             NEW AGENT
+          </button>
+          <button
+            onClick={openExternalModal}
+            className="border border-warning/40 text-warning hover:border-warning px-4 py-2 font-mono text-[9px] uppercase tracking-widest transition-colors cursor-pointer"
+          >
+            REGISTER EXTERNAL AGENT
           </button>
         </div>
         
@@ -439,9 +510,16 @@ export default function AgentBuilder() {
               </div>
 
               <div className="flex justify-between items-center gap-3 mb-4">
-                <div className="flex items-center gap-2 border border-primary/30 bg-primary/10 px-2 py-1">
-                  <span className="w-1.5 h-1.5 bg-primary rounded-full"></span>
-                  <span className="font-mono text-[9px] uppercase text-primary font-bold tracking-widest">{agent.provider || 'UNKNOWN'}</span>
+                <div className="flex items-center gap-2 flex-wrap">
+                  <div className="flex items-center gap-2 border border-primary/30 bg-primary/10 px-2 py-1">
+                    <span className="w-1.5 h-1.5 bg-primary rounded-full"></span>
+                    <span className="font-mono text-[9px] uppercase text-primary font-bold tracking-widest">{agent.provider || 'UNKNOWN'}</span>
+                  </div>
+                  {agent.agentType === 'external' && (
+                    <span className="border border-warning/40 bg-warning/10 px-2 py-1 font-mono text-[9px] uppercase text-warning font-bold tracking-widest">
+                      EXTERNAL
+                    </span>
+                  )}
                 </div>
                 <span className="font-mono text-[9px] text-text-muted uppercase tracking-widest">{formatRelativeTime(agent.created_at)}</span>
               </div>
@@ -603,6 +681,140 @@ export default function AgentBuilder() {
         </div>
       )}
 
+      {showExternalModal && (
+        <div className="fixed inset-0 z-50 bg-[#050505]/95 flex items-center justify-center p-8">
+          <div className="w-full max-w-2xl border border-[#262626] bg-[#0a0a0a]">
+            <div className="flex items-center justify-between border-b border-[#262626] px-6 py-4 bg-[#050505]">
+              <div className="flex items-center gap-3">
+                <span className="material-symbols-outlined text-warning text-[20px]">hub</span>
+                <h3 className="font-mono text-[13px] text-white uppercase font-bold tracking-widest">REGISTER_EXTERNAL_AGENT</h3>
+              </div>
+              <button onClick={closeExternalModal} className="text-text-muted hover:text-white transition-colors cursor-pointer">
+                <span className="material-symbols-outlined text-[18px]">close</span>
+              </button>
+            </div>
+
+            {proxyResult ? (
+              <div className="p-6 space-y-6">
+                <div className="border border-warning/40 bg-warning/10 p-4">
+                  <p className="font-mono text-[10px] text-warning uppercase tracking-widest">
+                    This key will not be shown again. Store it securely.
+                  </p>
+                </div>
+                <div className="space-y-2">
+                  <label className="font-mono text-[10px] text-primary uppercase tracking-[0.15em] block">PROXY_KEY</label>
+                  <div className="flex gap-3">
+                    <input
+                      readOnly
+                      value={proxyResult.proxyKey}
+                      className="flex-1 bg-[#050505] border border-[#262626] text-white px-4 py-3 font-mono text-[12px]"
+                    />
+                    <button
+                      onClick={copyProxyKey}
+                      className="border border-primary/30 text-primary hover:border-primary px-4 py-3 font-mono text-[9px] uppercase tracking-widest transition-colors cursor-pointer"
+                    >
+                      COPY
+                    </button>
+                  </div>
+                </div>
+                <div className="flex justify-end">
+                  <button
+                    onClick={closeExternalModal}
+                    className="primary-btn relative bg-primary text-[#050505] py-3 px-8 font-mono text-[12px] font-bold uppercase tracking-[0.15em] transition-all overflow-hidden active:scale-[0.98] cursor-pointer"
+                  >
+                    <span className="relative z-10">DONE</span>
+                    <div className="scan-line"></div>
+                  </button>
+                </div>
+              </div>
+            ) : (
+              <div className="p-6 space-y-6">
+                <div className="grid grid-cols-2 gap-6">
+                  <div className="space-y-2">
+                    <label className="font-mono text-[10px] text-primary uppercase tracking-[0.15em] block">AGENT_NAME</label>
+                    <input
+                      type="text"
+                      value={externalForm.name}
+                      onChange={(e) => setExternalForm((form) => ({ ...form, name: e.target.value }))}
+                      className="w-full bg-[#050505] border border-[#262626] text-white px-4 py-3 font-mono text-[13px] focus:border-primary uppercase"
+                    />
+                  </div>
+                  <div className="space-y-2">
+                    <label className="font-mono text-[10px] text-primary uppercase tracking-[0.15em] block">PROVIDER_HINT</label>
+                    <select
+                      value={externalForm.providerHint}
+                      onChange={(e) => setExternalForm((form) => ({ ...form, providerHint: e.target.value }))}
+                      className="w-full bg-[#050505] border border-[#262626] text-white px-4 py-3 font-mono text-[13px] focus:border-primary uppercase appearance-none cursor-pointer"
+                    >
+                      <option value="openai">OPENAI</option>
+                      <option value="anthropic">ANTHROPIC</option>
+                      <option value="azure">AZURE</option>
+                      <option value="custom">CUSTOM</option>
+                    </select>
+                  </div>
+                  <div className="space-y-2 col-span-2">
+                    <label className="font-mono text-[10px] text-primary uppercase tracking-[0.15em] block">PURPOSE_DESCRIPTION</label>
+                    <textarea
+                      rows={4}
+                      value={externalForm.purpose}
+                      onChange={(e) => setExternalForm((form) => ({ ...form, purpose: e.target.value }))}
+                      className="w-full bg-[#050505] border border-[#262626] text-white p-4 font-mono text-[13px] focus:border-primary resize-none"
+                    ></textarea>
+                  </div>
+                  <div className="space-y-3 col-span-2">
+                    <label className="font-mono text-[10px] text-primary uppercase tracking-[0.15em] block">INTERCEPTION_MODE</label>
+                    {[
+                      ['block', 'Stop and log any injection attempts before they reach your provider'],
+                      ['observe', 'Log and flag injection attempts, but always forward the request (recommended)'],
+                      ['report_only', 'Log everything, never intervene'],
+                    ].map(([mode, description]) => (
+                      <button
+                        key={mode}
+                        onClick={() => setExternalForm((form) => ({ ...form, interceptionMode: mode }))}
+                        className={`w-full text-left border px-4 py-3 transition-colors cursor-pointer ${
+                          externalForm.interceptionMode === mode
+                            ? 'border-primary bg-primary/10'
+                            : 'border-[#262626] bg-[#050505] hover:border-text-muted'
+                        }`}
+                      >
+                        <span className="block font-mono text-[10px] text-white uppercase tracking-widest">{mode}</span>
+                        <span className="block font-mono text-[10px] text-text-muted mt-1">{description}</span>
+                      </button>
+                    ))}
+                  </div>
+                  <div className="space-y-2 col-span-2">
+                    <label className="font-mono text-[10px] text-primary uppercase tracking-[0.15em] block">OWNER</label>
+                    <input
+                      readOnly
+                      value={user?.name || user?.email || user?.id || 'Current user'}
+                      className="w-full bg-[#050505] border border-[#262626] text-text-muted px-4 py-3 font-mono text-[13px]"
+                    />
+                  </div>
+                </div>
+
+                {externalError && (
+                  <div className="font-mono text-[12px] text-danger uppercase tracking-widest">
+                    {externalError}
+                  </div>
+                )}
+
+                <div className="flex items-center justify-end gap-4">
+                  <button onClick={closeExternalModal} className="font-mono text-[10px] text-text-muted hover:text-white uppercase tracking-widest transition-colors cursor-pointer">Cancel</button>
+                  <button
+                    onClick={handleRegisterExternalAgent}
+                    disabled={externalLoading || !externalForm.name.trim() || !externalForm.purpose.trim()}
+                    className="primary-btn relative bg-primary text-[#050505] py-3 px-8 font-mono text-[12px] font-bold uppercase tracking-[0.15em] transition-all overflow-hidden active:scale-[0.98] cursor-pointer disabled:opacity-50"
+                  >
+                    <span className="relative z-10">{externalLoading ? 'REGISTERING...' : 'REGISTER AGENT'}</span>
+                    <div className="scan-line"></div>
+                  </button>
+                </div>
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+
        {/* HEARTBEAT STREAM */}
        <div className="border border-[#262626] bg-[#0a0a0a] flex flex-col">
          <div className="px-6 py-4 border-b border-[#262626] flex items-center gap-3 bg-[#050505]">
@@ -625,12 +837,13 @@ function normalizeAgent(agent) {
     ...agent,
     refId: `AGENT_${agent.id}`,
     mission: agent.purpose,
-    model: agent.model_provider,
+    model: agent.provider_hint || agent.model_provider,
     created_at: agent.created_at,
     level: '1',
     knowledge: 'Base_Vectors',
-    status: 'active',
-    provider: agent.model_provider,
+    status: agent.status || 'active',
+    provider: agent.provider_hint || agent.model_provider,
+    agentType: agent.agent_type || 'internal',
     systemPrompt: agent.system_prompt,
   };
 }
