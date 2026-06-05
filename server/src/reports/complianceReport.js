@@ -1,6 +1,6 @@
 import { createHash } from 'crypto'
 import PDFDocument from 'pdfkit'
-import { getHumanRoot } from '../utils/ownershipChain.js'
+import { getHumanRoot, validateOwnership } from '../utils/ownershipChain.js'
 
 const SECURITY_ACTIONS = new Set([
   'guard_block',
@@ -69,21 +69,53 @@ function collectReportData(db, { tenantId, dateFrom, dateTo, agentId, reportId, 
   const totalRisk = events.reduce((sum, event) => sum + Number(event.risk_score || 0), 0)
   const averageRiskScore = events.length ? Math.round(totalRisk / events.length) : 0
 
+  let verifiedCount = 0
   const ownership = agents.map((agent) => {
-    const ownerChain = parseJson(agent.owner_chain, [])
-    const humanRoot = agent.owner_type === 'human'
-      ? agent.owner_id
-      : getHumanRoot(db, agent.id, tenantId)
-    const owner = usersById.get(humanRoot)
+    const validation = validateOwnership(db, agent.owner_id, agent.owner_type, tenantId, agent.id)
+    const chain = validation.chain || []
+    let ownerDisplay = ''
+    let chainDisplay = ''
+    let verified = false
+
+    if (validation.valid) {
+      verified = true
+      verifiedCount++
+
+      if (agent.owner_type === 'human') {
+        const user = usersById.get(agent.owner_id)
+        ownerDisplay = user?.email || agent.owner_id
+        chainDisplay = 'direct'
+      } else {
+        const chainNames = chain.map((linkId) => {
+          const parentAgent = agentsById.get(linkId)
+            || db.prepare('SELECT name FROM agents WHERE id = ? AND tenant_id = ?').get(linkId, tenantId)
+          return parentAgent?.name || linkId
+        })
+        const humanRoot = getHumanRoot(db, agent.id, tenantId)
+        const rootUser = usersById.get(humanRoot)
+        const rootDisplay = rootUser?.email || humanRoot
+        ownerDisplay = rootDisplay || agent.owner_id
+        chainDisplay = [agent.name, ...chainNames, rootDisplay].filter(Boolean).join(' → ')
+      }
+    } else {
+      ownerDisplay = '⚠ UNVERIFIED'
+      chainDisplay = validation.reason || validation.error || 'Chain validation failed'
+    }
 
     return {
       agentId: agent.id,
       agentName: agent.name,
-      owner: owner?.email || humanRoot || 'UNRESOLVED',
-      chainDepth: ownerChain.length,
-      status: agent.status || 'live',
+      agentType: agent.agent_type || 'internal',
+      owner: ownerDisplay,
+      chain: chainDisplay,
+      depth: chain.length,
+      verified: verified ? '✓ VERIFIED' : '⚠ UNVERIFIED',
     }
   })
+
+  const humanAccountabilityPct = agents.length > 0
+    ? Math.round((verifiedCount / agents.length) * 100)
+    : 100
 
   return {
     reportId,
@@ -97,7 +129,7 @@ function collectReportData(db, { tenantId, dateFrom, dateTo, agentId, reportId, 
       blockedRequests: events.filter((event) => SECURITY_ACTIONS.has(event.action)).length,
       averageRiskScore,
       agentsCovered: agents.length,
-      humanAccountability: '100% — all agents have verified human owner chain',
+      humanAccountability: `${humanAccountabilityPct}% — ${verifiedCount}/${agents.length} agents have verified human owner chain`,
     },
     ownership,
     securityEvents: securityEvents.map((event) => ({
@@ -131,9 +163,15 @@ function writeWatermark(doc) {
 
 function sectionTitle(doc, text) {
   doc.moveDown(1)
-  doc.font('Helvetica-Bold').fontSize(15).fillColor('#111111').text(text)
-  doc.moveTo(40, doc.y + 4).lineTo(555, doc.y + 4).strokeColor('#10b981').stroke()
-  doc.moveDown(1)
+  const y = doc.y
+  // Reset x position explicitly - tableRow leaves cursor at last column
+  doc.page.margins.left = 40
+  doc.font('Helvetica-Bold').fontSize(11).fillColor('#111111')
+  doc.x = 40
+  doc.text(text, 40, y, { width: 515, lineBreak: false })
+  doc.moveDown(0.3)
+  doc.moveTo(40, doc.y).lineTo(555, doc.y).strokeColor('#10b981').stroke()
+  doc.moveDown(0.8)
 }
 
 function tableRow(doc, values, widths, options = {}) {
@@ -141,13 +179,19 @@ function tableRow(doc, values, widths, options = {}) {
   const font = options.header ? 'Helvetica-Bold' : 'Helvetica'
   const size = options.header ? 8 : 7
   doc.font(font).fontSize(size).fillColor('#111111')
+  const rowHeight = options.height || Math.max(
+    24,
+    ...values.map((value, index) => doc.heightOfString(String(value ?? ''), {
+      width: widths[index] - 6,
+    }) + 6)
+  )
   values.forEach((value, index) => {
     doc.text(String(value ?? ''), 40 + widths.slice(0, index).reduce((a, b) => a + b, 0), startY, {
       width: widths[index] - 6,
       continued: false,
     })
   })
-  doc.y = startY + (options.height || 24)
+  doc.y = startY + rowHeight
 }
 
 function percentage(count, total) {
@@ -180,47 +224,47 @@ function renderPdf(data, reportHash) {
     doc.addPage()
     sectionTitle(doc, 'Executive Summary')
     doc.font('Helvetica').fontSize(10).fillColor('#111111')
-      .text(`Total AI interactions in period: ${data.executiveSummary.totalInteractions}`)
-      .text(`Blocked requests: ${data.executiveSummary.blockedRequests}`)
-      .text(`Average risk score: ${data.executiveSummary.averageRiskScore}`)
-      .text(`Agents covered: ${data.executiveSummary.agentsCovered}`)
-      .text(`Human accountability: ${data.executiveSummary.humanAccountability}`)
+    doc.text(`Total AI interactions in period: ${data.executiveSummary.totalInteractions}`, 40, doc.y, { width: 515 })
+    doc.text(`Blocked requests: ${data.executiveSummary.blockedRequests}`, 40, doc.y, { width: 515 })
+    doc.text(`Average risk score: ${data.executiveSummary.averageRiskScore}`, 40, doc.y, { width: 515 })
+    doc.text(`Agents covered: ${data.executiveSummary.agentsCovered}`, 40, doc.y, { width: 515 })
+    doc.text(`Human accountability: ${data.executiveSummary.humanAccountability}`, 40, doc.y, { width: 515 })
 
     sectionTitle(doc, 'Ownership Chain Verification')
-    tableRow(doc, ['Agent Name', 'Owner', 'Chain Depth', 'Status'], [190, 210, 80, 80], { header: true, height: 18 })
+    tableRow(doc, ['Agent', 'Type', 'Owner', 'Chain', 'Verified'], [110, 55, 120, 155, 75], { header: true, height: 18 })
     data.ownership.forEach((row) => {
       if (doc.y > 730) doc.addPage()
-      tableRow(doc, [row.agentName, row.owner, row.chainDepth, row.status], [190, 210, 80, 80])
+      tableRow(doc, [row.agentName, row.agentType, row.owner, row.chain, row.verified], [110, 55, 120, 155, 75])
     })
 
     sectionTitle(doc, 'Security Events — Top 50 By Risk Score')
-    tableRow(doc, ['Timestamp', 'Event Type', 'Risk Score', 'Agent', 'Resolution'], [120, 105, 70, 120, 165], { header: true, height: 18 })
+    tableRow(doc, ['Timestamp', 'Event Type', 'Risk Score', 'Agent', 'Resolution'], [110, 100, 65, 110, 130], { header: true, height: 18 })
     data.securityEvents.forEach((row) => {
       if (doc.y > 730) doc.addPage()
-      tableRow(doc, [iso(row.timestamp), row.eventType, row.riskScore, row.agent, row.resolution], [120, 105, 70, 120, 165], { height: 28 })
+      tableRow(doc, [iso(row.timestamp), row.eventType, row.riskScore, row.agent, row.resolution], [110, 100, 65, 110, 130], { height: 28 })
     })
 
     sectionTitle(doc, 'Risk Distribution')
     const totalEvents = data.auditIntegrity.totalAuditEntries
     doc.font('Helvetica').fontSize(10)
-      .text(`NOMINAL (0–20): ${data.riskBuckets.nominal} events ${percentage(data.riskBuckets.nominal, totalEvents)}`)
-      .text(`ELEVATED (21–50): ${data.riskBuckets.elevated} events ${percentage(data.riskBuckets.elevated, totalEvents)}`)
-      .text(`CRITICAL (51–100): ${data.riskBuckets.critical} events ${percentage(data.riskBuckets.critical, totalEvents)}`)
+    doc.text(`NOMINAL (0–20): ${data.riskBuckets.nominal} events ${percentage(data.riskBuckets.nominal, totalEvents)}`, 40, doc.y, { width: 515 })
+    doc.text(`ELEVATED (21–50): ${data.riskBuckets.elevated} events ${percentage(data.riskBuckets.elevated, totalEvents)}`, 40, doc.y, { width: 515 })
+    doc.text(`CRITICAL (51–100): ${data.riskBuckets.critical} events ${percentage(data.riskBuckets.critical, totalEvents)}`, 40, doc.y, { width: 515 })
 
     sectionTitle(doc, 'Audit Integrity')
     doc.font('Helvetica').fontSize(10)
-      .text(`Total audit entries in period: ${data.auditIntegrity.totalAuditEntries}`)
-      .text(`Hash verification: ${data.auditIntegrity.hashVerification}`)
-      .text(`Append-only enforcement: ${data.auditIntegrity.appendOnlyEnforcement}`)
+    doc.text(`Total audit entries in period: ${data.auditIntegrity.totalAuditEntries}`, 40, doc.y, { width: 515 })
+    doc.text(`Hash verification: ${data.auditIntegrity.hashVerification}`, 40, doc.y, { width: 515 })
+    doc.text(`Append-only enforcement: ${data.auditIntegrity.appendOnlyEnforcement}`, 40, doc.y, { width: 515 })
 
     doc.addPage()
     sectionTitle(doc, 'Digital Signature')
     doc.font('Helvetica').fontSize(11)
-      .text('This report was generated by Eudora Report Engine')
-      .text(`Timestamp: ${iso(data.generatedAt)}`)
-      .text(`Report hash: ${reportHash}`)
-      .moveDown(1)
-      .text('Compliant with DORA Article 11 operational resilience requirements')
+    doc.text('This report was generated by Eudora Report Engine', 40, doc.y, { width: 515 })
+    doc.text(`Timestamp: ${iso(data.generatedAt)}`, 40, doc.y, { width: 515 })
+    doc.text(`Report hash: ${reportHash}`, 40, doc.y, { width: 515 })
+    doc.moveDown(1)
+    doc.text('Compliant with DORA Article 11 operational resilience requirements', 40, doc.y, { width: 515 })
 
     doc.end()
   })
