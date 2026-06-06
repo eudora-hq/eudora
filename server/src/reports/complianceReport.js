@@ -33,7 +33,120 @@ function normaliseAgentFilter(events, agentId) {
   return events.filter((event) => event.metadata?.agentId === agentId)
 }
 
-function collectReportData(db, { tenantId, dateFrom, dateTo, agentId, reportId, generatedAt }) {
+function traceAuditEvent(trace, events) {
+  const linked = events.filter((event) => {
+    const metadata = event.metadata || {}
+    if (trace.conversation_id && metadata.conversationId === trace.conversation_id) return true
+    if (trace.cron_run_id && metadata.cronRunId === trace.cron_run_id) return true
+    if (trace.workflow_run_id && metadata.runId === trace.workflow_run_id) return true
+    return metadata.agentId === trace.resolved_agent_id
+  })
+
+  return linked.sort(
+    (a, b) => Math.abs(Number(a.ts) - Number(trace.ts)) - Math.abs(Number(b.ts) - Number(trace.ts))
+  )[0] || null
+}
+
+function isFlaggedTrace(trace) {
+  return Number(trace.risk_score || 0) > 20
+    || trace.guard_result === 'blocked'
+    || trace.scope_result === 'violation'
+}
+
+function gatherTraceData(db, tenantId, dateFrom, dateTo, agentId, traceMode, events) {
+  const agentQuery = agentId
+    ? 'SELECT * FROM agents WHERE id = ? AND tenant_id = ?'
+    : 'SELECT * FROM agents WHERE tenant_id = ? ORDER BY name ASC'
+  const agentParams = agentId ? [agentId, tenantId] : [tenantId]
+  const agents = db.prepare(agentQuery).all(...agentParams)
+
+  const traceRows = db.prepare(`
+    SELECT t.*,
+      COALESCE(c.agent_id, cj.agent_id) AS resolved_agent_id
+    FROM traces t
+    LEFT JOIN conversations c ON c.id = t.conversation_id
+    LEFT JOIN cron_runs cr ON cr.id = t.cron_run_id
+    LEFT JOIN cron_jobs cj ON cj.id = cr.cron_job_id
+    WHERE t.tenant_id = ? AND t.ts BETWEEN ? AND ?
+    ORDER BY t.ts ASC
+  `).all(tenantId, dateFrom, dateTo)
+
+  return agents.map((agent) => {
+    const humanOwnerId = agent.owner_type === 'agent'
+      ? getHumanRoot(db, agent.id, tenantId)
+      : agent.owner_id
+    const owner = db.prepare(
+      'SELECT email FROM users WHERE id = ? AND tenant_id = ?'
+    ).get(humanOwnerId, tenantId)
+    const ownerEmail = owner?.email || humanOwnerId || agent.owner_id || 'Unverified'
+
+    const allTraces = traceRows
+      .filter((trace) => trace.resolved_agent_id === agent.id)
+      .map((trace) => {
+        const auditEvent = traceAuditEvent(trace, events)
+        const metadata = auditEvent?.metadata || {}
+        const violation = metadata.violation || metadata.scopeViolation || null
+        const guardBlocked = auditEvent?.action === 'guard_block'
+        const scopeViolated = auditEvent?.action === 'scope_violation'
+        const sanitiserPatterns = metadata.patterns || metadata.sanitiserPatterns || []
+
+        return {
+          ...trace,
+          created_at: trace.ts,
+          intent_confidence: metadata.intentConfidence ?? metadata.confidence ?? null,
+          sanitiser_flagged: auditEvent?.action === 'injection_detected'
+            || guardBlocked
+            || (Array.isArray(sanitiserPatterns) ? sanitiserPatterns.length > 0 : Boolean(sanitiserPatterns)),
+          sanitiser_patterns: Array.isArray(sanitiserPatterns)
+            ? sanitiserPatterns.join(', ')
+            : sanitiserPatterns,
+          guard_result: guardBlocked ? 'blocked' : 'allowed',
+          guard_reason: guardBlocked ? violation || 'injection detected' : null,
+          scope_result: scopeViolated ? 'violation' : 'compliant',
+          scope_violation_type: scopeViolated ? violation : null,
+          prompt_hash: auditEvent?.prompt_hash || null,
+        }
+      })
+
+    const totalRuns = allTraces.length
+    const avgRisk = totalRuns > 0
+      ? Math.round(allTraces.reduce((sum, trace) => sum + Number(trace.risk_score || 0), 0) / totalRuns)
+      : 0
+    const flaggedRuns = allTraces.filter(isFlaggedTrace).length
+
+    let traces = []
+    let truncated = false
+    if (traceMode === 'full') {
+      traces = allTraces.slice(0, 100)
+      truncated = allTraces.length > 100
+    } else if (traceMode === 'flagged') {
+      traces = allTraces.filter(isFlaggedTrace)
+    }
+
+    return {
+      agentId: agent.id,
+      agentName: agent.name,
+      agentType: agent.agent_type || 'internal',
+      ownerEmail,
+      totalRuns,
+      avgRisk,
+      flaggedRuns,
+      traces,
+      truncated,
+      totalCount: allTraces.length,
+    }
+  }).filter((agent) => agent.totalRuns > 0)
+}
+
+function collectReportData(db, {
+  tenantId,
+  dateFrom,
+  dateTo,
+  agentId,
+  reportId,
+  generatedAt,
+  traceMode = 'flagged',
+}) {
   const tenant = db.prepare('SELECT id, name FROM tenants WHERE id = ?').get(tenantId)
   const agents = db.prepare(
     'SELECT * FROM agents WHERE tenant_id = ? ORDER BY name ASC'
@@ -54,6 +167,17 @@ function collectReportData(db, { tenantId, dateFrom, dateTo, agentId, reportId, 
       metadata: parseJson(event.metadata),
     }))
   const events = normaliseAgentFilter(rawEvents, agentId)
+  const traceData = gatherTraceData(
+    db,
+    tenantId,
+    dateFrom,
+    dateTo,
+    agentId,
+    traceMode,
+    events
+  )
+  const traceRecords = traceData.reduce((sum, agent) => sum + agent.totalRuns, 0)
+  const flaggedTraces = traceData.reduce((sum, agent) => sum + agent.flaggedRuns, 0)
 
   const securityEvents = events
     .filter((event) => SECURITY_ACTIONS.has(event.action))
@@ -126,12 +250,16 @@ function collectReportData(db, { tenantId, dateFrom, dateTo, agentId, reportId, 
     agentId: agentId || null,
     executiveSummary: {
       totalInteractions: events.filter((event) => INTERACTION_ACTIONS.has(event.action)).length,
+      traceRecords,
+      flaggedTraces,
       blockedRequests: events.filter((event) => SECURITY_ACTIONS.has(event.action)).length,
       averageRiskScore,
       agentsCovered: agents.length,
       humanAccountability: `${humanAccountabilityPct}% — ${verifiedCount}/${agents.length} agents have verified human owner chain`,
     },
     ownership,
+    traceMode,
+    traceData,
     securityEvents: securityEvents.map((event) => ({
       timestamp: event.ts,
       eventType: event.action,
@@ -199,6 +327,26 @@ function percentage(count, total) {
   return `${Math.round((count / total) * 100)}%`
 }
 
+function contextDisplay(value) {
+  const context = parseJson(value, [])
+  if (!Array.isArray(context) || context.length === 0) return 'none'
+  const names = context.map((item) => {
+    if (typeof item === 'string') return item
+    return item.filename || item.name || item.id || 'unknown context'
+  })
+  return `${names.length} file(s) — ${names.join(', ')}`
+}
+
+function traceModeLabel(traceMode) {
+  if (traceMode === 'full') return 'All Traces'
+  if (traceMode === 'summary') return 'Summary'
+  return 'Flagged Only'
+}
+
+function ensureSpace(doc, minimumY = 700) {
+  if (doc.y > minimumY) doc.addPage()
+}
+
 function renderPdf(data, reportHash) {
   return new Promise((resolve, reject) => {
     const doc = new PDFDocument({ margin: 40, size: 'A4' })
@@ -225,6 +373,7 @@ function renderPdf(data, reportHash) {
     sectionTitle(doc, 'Executive Summary')
     doc.font('Helvetica').fontSize(10).fillColor('#111111')
     doc.text(`Total AI interactions in period: ${data.executiveSummary.totalInteractions}`, 40, doc.y, { width: 515 })
+    doc.text(`Trace records: ${data.executiveSummary.traceRecords} (${data.executiveSummary.flaggedTraces} flagged)`, 40, doc.y, { width: 515 })
     doc.text(`Blocked requests: ${data.executiveSummary.blockedRequests}`, 40, doc.y, { width: 515 })
     doc.text(`Average risk score: ${data.executiveSummary.averageRiskScore}`, 40, doc.y, { width: 515 })
     doc.text(`Agents covered: ${data.executiveSummary.agentsCovered}`, 40, doc.y, { width: 515 })
@@ -244,6 +393,104 @@ function renderPdf(data, reportHash) {
       tableRow(doc, [iso(row.timestamp), row.eventType, row.riskScore, row.agent, row.resolution], [110, 100, 65, 110, 130], { height: 28 })
     })
 
+    sectionTitle(doc, `Agent Decision Traces (${traceModeLabel(data.traceMode)})`)
+    if (data.traceData.length === 0) {
+      doc.font('Helvetica').fontSize(10).fillColor('#666666')
+      doc.text('No agent trace records were captured in this reporting period.', 40, doc.y, { width: 515 })
+    } else if (data.traceMode === 'summary') {
+      doc.font('Helvetica').fontSize(10).fillColor('#111111')
+      doc.text('Trace mode: Summary only. Individual traces not included.', 40, doc.y, { width: 515 })
+      doc.moveDown(0.5)
+      tableRow(doc, ['Agent', 'Owner', 'Runs', 'Avg Risk', 'Flagged'], [160, 150, 60, 70, 75], { header: true, height: 18 })
+      data.traceData.forEach((agent) => {
+        ensureSpace(doc, 730)
+        tableRow(
+          doc,
+          [agent.agentName, agent.ownerEmail, agent.totalRuns, agent.avgRisk, agent.flaggedRuns],
+          [160, 150, 60, 70, 75]
+        )
+      })
+    } else {
+      data.traceData.forEach((agent) => {
+        ensureSpace(doc, 650)
+        doc.moveDown(0.5)
+        doc.font('Helvetica-Bold').fontSize(10).fillColor('#111111')
+        doc.text(`AGENT: ${agent.agentName}`, 40, doc.y, { width: 515 })
+        doc.font('Helvetica').fontSize(9).fillColor('#333333')
+        doc.text(
+          `Owner: ${agent.ownerEmail} | Type: ${agent.agentType} | Runs: ${agent.totalRuns} | Avg risk: ${agent.avgRisk}/100 | Flagged: ${agent.flaggedRuns}`,
+          40,
+          doc.y,
+          { width: 515 }
+        )
+
+        if (agent.truncated) {
+          doc.font('Helvetica').fontSize(8).fillColor('#666666')
+          doc.text(`Note: Showing first 100 of ${agent.totalCount} traces.`, 40, doc.y, { width: 515 })
+        }
+
+        if (agent.traces.length === 0) {
+          doc.font('Helvetica').fontSize(9).fillColor('#666666')
+          doc.text(
+            data.traceMode === 'flagged'
+              ? 'No flagged traces in this period.'
+              : 'No traces in this period.',
+            40,
+            doc.y,
+            { width: 515 }
+          )
+          doc.moveDown(0.5)
+          return
+        }
+
+        agent.traces.forEach((trace) => {
+          ensureSpace(doc, 680)
+          const flagged = isFlaggedTrace(trace)
+          const flagMark = flagged ? ' — FLAGGED' : ''
+          const confidence = trace.intent_confidence != null
+            ? `${Math.round(Number(trace.intent_confidence) * 100)}% confidence`
+            : 'no confidence recorded'
+          const sanitiser = trace.sanitiser_flagged
+            ? `FLAGGED${trace.sanitiser_patterns ? ` — ${trace.sanitiser_patterns}` : ''}`
+            : 'CLEAN'
+          const guardResult = trace.guard_result === 'blocked'
+            ? `BLOCKED — ${trace.guard_reason || 'injection detected'}`
+            : 'ALLOWED'
+          const scopeResult = trace.scope_result === 'violation'
+            ? `VIOLATION — ${trace.scope_violation_type || 'scope policy'}`
+            : 'COMPLIANT'
+
+          doc.moveDown(0.3)
+          doc.font('Helvetica-Bold').fontSize(8).fillColor(flagged ? '#cc0000' : '#111111')
+          doc.text(
+            `Run #${trace.id.substring(0, 8)} — ${iso(trace.created_at)}${flagMark}`,
+            40,
+            doc.y,
+            { width: 515 }
+          )
+
+          doc.font('Helvetica').fontSize(8).fillColor('#333333')
+          const lines = [
+            `Intent: ${trace.intent || 'unknown'} (${confidence})`,
+            `Context used: ${contextDisplay(trace.context_injected)}`,
+            `Security: ${sanitiser} — risk score ${trace.risk_score || 0}/100`,
+            `Guard: ${guardResult}`,
+            `Scope: ${scopeResult}`,
+            `Output: ${trace.tokens_used || 0} tokens — ${trace.duration_ms || 0}ms`,
+            `Decision hash: sha256:${trace.prompt_hash || 'not recorded'}`,
+          ]
+
+          lines.forEach((line) => {
+            ensureSpace(doc, 750)
+            doc.text(`  ${line}`, 40, doc.y, { width: 515 })
+          })
+          doc.moveDown(0.2)
+        })
+
+        doc.moveDown(0.5)
+      })
+    }
+
     sectionTitle(doc, 'Risk Distribution')
     const totalEvents = data.auditIntegrity.totalAuditEntries
     doc.font('Helvetica').fontSize(10)
@@ -254,6 +501,7 @@ function renderPdf(data, reportHash) {
     sectionTitle(doc, 'Audit Integrity')
     doc.font('Helvetica').fontSize(10)
     doc.text(`Total audit entries in period: ${data.auditIntegrity.totalAuditEntries}`, 40, doc.y, { width: 515 })
+    doc.text(`Trace records in period: ${data.executiveSummary.traceRecords} (${data.executiveSummary.flaggedTraces} flagged)`, 40, doc.y, { width: 515 })
     doc.text(`Hash verification: ${data.auditIntegrity.hashVerification}`, 40, doc.y, { width: 515 })
     doc.text(`Append-only enforcement: ${data.auditIntegrity.appendOnlyEnforcement}`, 40, doc.y, { width: 515 })
 

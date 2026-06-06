@@ -39,7 +39,16 @@ export default async function reportsRoutes(fastify) {
       })
     }
 
-    const { dateFrom, dateTo, agentId = null, format = 'pdf' } = request.body || {}
+    const {
+      dateFrom,
+      dateTo,
+      agentId = null,
+      format = 'pdf',
+      traceMode,
+    } = request.body || {}
+    const resolvedTraceMode = ['flagged', 'full', 'summary'].includes(traceMode)
+      ? traceMode
+      : 'flagged'
     if (format !== 'pdf') {
       return reply.code(400).send({ error: 'unsupported_format' })
     }
@@ -65,6 +74,7 @@ export default async function reportsRoutes(fastify) {
       agentId,
       reportId,
       generatedAt,
+      traceMode: resolvedTraceMode,
     })
 
     db.prepare(`
