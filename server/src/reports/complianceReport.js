@@ -123,6 +123,27 @@ function gatherTraceData(db, tenantId, dateFrom, dateTo, agentId, traceMode, eve
       traces = allTraces.filter(isFlaggedTrace)
     }
 
+    // Enrich traces — resolve context file IDs to filenames
+    const enrichedTraces = traces.map(trace => {
+      try {
+        const ctx = JSON.parse(trace.context_injected || '[]')
+        if (Array.isArray(ctx) && ctx.length > 0) {
+          const enriched = ctx.map(item => {
+            const id = typeof item === 'string' ? item : (item.id || item.contextFileId)
+            if (id) {
+              try {
+                const row = db.prepare('SELECT filename FROM context_files WHERE id = ?').get(id)
+                if (row?.filename) return { id, filename: row.filename }
+              } catch {}
+            }
+            return item
+          })
+          return { ...trace, context_injected: JSON.stringify(enriched) }
+        }
+      } catch {}
+      return trace
+    })
+
     return {
       agentId: agent.id,
       agentName: agent.name,
@@ -131,7 +152,7 @@ function gatherTraceData(db, tenantId, dateFrom, dateTo, agentId, traceMode, eve
       totalRuns,
       avgRisk,
       flaggedRuns,
-      traces,
+      traces: enrichedTraces,
       truncated,
       totalCount: allTraces.length,
     }
@@ -219,10 +240,10 @@ function collectReportData(db, {
         const rootUser = usersById.get(humanRoot)
         const rootDisplay = rootUser?.email || humanRoot
         ownerDisplay = rootDisplay || agent.owner_id
-        chainDisplay = [agent.name, ...chainNames, rootDisplay].filter(Boolean).join(' → ')
+        chainDisplay = [agent.name, ...chainNames, rootDisplay].filter(Boolean).join(' -> ')
       }
     } else {
-      ownerDisplay = '⚠ UNVERIFIED'
+      ownerDisplay = 'UNVERIFIED !'
       chainDisplay = validation.reason || validation.error || 'Chain validation failed'
     }
 
@@ -233,7 +254,7 @@ function collectReportData(db, {
       owner: ownerDisplay,
       chain: chainDisplay,
       depth: chain.length,
-      verified: verified ? '✓ VERIFIED' : '⚠ UNVERIFIED',
+      verified: verified ? 'VERIFIED' : 'UNVERIFIED !',
     }
   })
 
@@ -332,7 +353,7 @@ function contextDisplay(value) {
   if (!Array.isArray(context) || context.length === 0) return 'none'
   const names = context.map((item) => {
     if (typeof item === 'string') return item
-    return item.filename || item.name || item.id || 'unknown context'
+    return item.filename || item.name || item.id || 'unknown'
   })
   return `${names.length} file(s) — ${names.join(', ')}`
 }
