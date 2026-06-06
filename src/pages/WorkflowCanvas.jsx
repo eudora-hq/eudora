@@ -15,8 +15,22 @@ import {
 import '@xyflow/react/dist/style.css';
 import api from '../api/client';
 import { TierGate } from '../components/TierGate';
+import { WORKFLOW_TEMPLATES } from '../constants/agentTemplates';
 
 const EDGE_STYLE = { stroke: '#10b981', strokeWidth: 2 };
+const NODE_DEFINITIONS = {
+  fetch_url: {
+    label: 'Fetch URL',
+    icon: 'link',
+    description: 'Fetches content from a URL and returns plain text',
+    color: 'border-blue-500/40 bg-blue-500/5',
+    inputs: ['url'],
+    outputs: ['text'],
+    config: {
+      url: { type: 'text', placeholder: 'https://example.com/document', label: 'URL (optional - uses input if empty)' },
+    },
+  },
+};
 
 function AgentNode({ data, selected }) {
   return (
@@ -39,7 +53,31 @@ function AgentNode({ data, selected }) {
   );
 }
 
-const nodeTypes = { agent: AgentNode };
+function FetchUrlNode({ data, selected }) {
+  return (
+    <div className={`w-[240px] border bg-[#0a0a0a] p-4 transition-colors ${selected ? 'border-blue-400' : 'border-blue-500/40'}`}>
+      <Handle type="target" position={Position.Left} className="!w-3 !h-3 !bg-blue-400 !border-[#050505]" />
+      <div className="flex items-start justify-between gap-3 mb-3">
+        <div className="flex items-center gap-2 min-w-0">
+          <span className="material-symbols-outlined text-blue-400 text-[18px]">link</span>
+          <h3 className="font-mono text-[12px] text-white uppercase font-bold tracking-widest leading-tight">{data.label || 'FETCH URL'}</h3>
+        </div>
+        <span className="border border-blue-500/40 bg-blue-500/10 px-2 py-1 font-mono text-[8px] text-blue-400 uppercase tracking-widest shrink-0">
+          URL
+        </span>
+      </div>
+      <p
+        className="font-mono text-[10px] text-text-muted leading-relaxed overflow-hidden"
+        style={{ display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical' }}
+      >
+        {data.config?.url || 'Uses incoming text as the URL when no URL is configured.'}
+      </p>
+      <Handle type="source" position={Position.Right} className="!w-3 !h-3 !bg-blue-400 !border-[#050505]" />
+    </div>
+  );
+}
+
+const nodeTypes = { agent: AgentNode, fetch_url: FetchUrlNode };
 
 export default function WorkflowCanvas() {
   const { id } = useParams();
@@ -111,6 +149,20 @@ function WorkflowList() {
     }
   };
 
+  const createResearchWorkflow = async (template) => {
+    setCreating(true);
+    setError('');
+    try {
+      const payload = buildWorkflowTemplatePayload(template, agents);
+      const res = await api.post('/workflows', payload);
+      navigate(`/workflows/${res.data.id}`);
+    } catch (err) {
+      setError(err.response?.data?.error === 'upgrade_required' ? 'Workflow builder is available on Professional and Enterprise plans' : err.response?.data?.error || 'Unable to create research workflow');
+    } finally {
+      setCreating(false);
+    }
+  };
+
   return (
     <div className="flex flex-col gap-8 fade-in pb-12 w-full">
       <div className="border-l-[4px] border-primary pl-6 py-2 flex items-start justify-between gap-6">
@@ -129,6 +181,38 @@ function WorkflowList() {
       </div>
 
       {error && <div className="border border-danger/40 bg-danger/10 p-4 font-mono text-[11px] text-danger uppercase tracking-widest">{error}</div>}
+
+      {!loading && (
+        <div className="border border-[#262626] bg-[#0a0a0a] p-5 space-y-4">
+          <div className="flex items-center justify-between gap-4">
+            <div>
+              <h2 className="font-mono text-[14px] text-white uppercase font-bold tracking-widest">RESEARCH TEMPLATES</h2>
+              <p className="font-mono text-[10px] text-text-muted uppercase tracking-widest mt-1">COMPLIANCE RESEARCH CHAINS WITH URL FETCHING</p>
+            </div>
+            <span className="material-symbols-outlined text-primary text-[22px]">travel_explore</span>
+          </div>
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+            {WORKFLOW_TEMPLATES.map((template) => (
+              <div key={template.id} className="border border-[#262626] bg-[#050505] p-4 space-y-4 hover:border-primary/50 transition-colors">
+                <div className="flex items-start justify-between gap-3">
+                  <h3 className="font-mono text-[12px] text-white uppercase font-bold tracking-widest leading-tight">{template.name}</h3>
+                  <span className={`border px-2 py-1 font-mono text-[8px] uppercase tracking-widest shrink-0 ${template.badge === 'RISK' ? 'border-warning/40 bg-warning/10 text-warning' : 'border-primary/40 bg-primary/10 text-primary'}`}>
+                    {template.badge}
+                  </span>
+                </div>
+                <p className="font-mono text-[10px] text-text-muted leading-relaxed">{template.description}</p>
+                <button
+                  onClick={() => createResearchWorkflow(template)}
+                  disabled={creating || (template.nodes.some(node => node.type === 'agent') && agents.length === 0)}
+                  className="w-full border border-primary/40 bg-primary/10 text-primary px-4 py-2 font-mono text-[10px] uppercase font-bold tracking-widest disabled:opacity-40"
+                >
+                  USE TEMPLATE
+                </button>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
 
       {loading ? (
         <div className="border border-[#262626] bg-[#0a0a0a] p-8 font-mono text-[10px] text-text-muted uppercase tracking-widest">LOADING WORKFLOWS...</div>
@@ -206,6 +290,7 @@ function WorkflowEditor({ workflowId }) {
   const agentById = useMemo(() => new Map(agents.map(agent => [agent.id, agent])), [agents]);
   const selectedNode = nodes.find(node => node.id === selectedNodeId);
   const selectedAgent = selectedNode?.data?.agent;
+  const selectedDefinition = selectedNode?.type ? NODE_DEFINITIONS[selectedNode.type] : null;
   const outgoingEdges = edges.filter(edge => edge.source === selectedNodeId);
 
   useEffect(() => {
@@ -258,19 +343,42 @@ function WorkflowEditor({ workflowId }) {
     event.dataTransfer.effectAllowed = 'move';
   };
 
+  const onUtilityDragStart = (event, type) => {
+    event.dataTransfer.setData('application/eudora-node-type', type);
+    event.dataTransfer.effectAllowed = 'move';
+  };
+
   const onDrop = useCallback((event) => {
     event.preventDefault();
-    const raw = event.dataTransfer.getData('application/eudora-agent');
-    if (!raw) return;
-    const agent = JSON.parse(raw);
     const position = screenToFlowPosition({ x: event.clientX, y: event.clientY });
-    const id = `node-${agent.id}-${Date.now()}`;
-    setNodes((nds) => nds.concat({
-      id,
-      type: 'agent',
-      position,
-      data: { agentId: agent.id, agent, label: agent.name },
-    }));
+    const rawAgent = event.dataTransfer.getData('application/eudora-agent');
+    const utilityType = event.dataTransfer.getData('application/eudora-node-type');
+
+    if (rawAgent) {
+      const agent = JSON.parse(rawAgent);
+      const id = `node-${agent.id}-${Date.now()}`;
+      setNodes((nds) => nds.concat({
+        id,
+        type: 'agent',
+        position,
+        data: { agentId: agent.id, agent, label: agent.name },
+      }));
+      return;
+    }
+
+    if (utilityType && NODE_DEFINITIONS[utilityType]) {
+      const definition = NODE_DEFINITIONS[utilityType];
+      const id = `node-${utilityType}-${Date.now()}`;
+      setNodes((nds) => nds.concat({
+        id,
+        type: utilityType,
+        position,
+        data: {
+          label: definition.label,
+          config: { url: '' },
+        },
+      }));
+    }
   }, [screenToFlowPosition, setNodes]);
 
   const onDragOver = useCallback((event) => {
@@ -342,6 +450,20 @@ function WorkflowEditor({ workflowId }) {
     setEdges((eds) => eds.map(edge => edge.id === edgeId ? { ...edge, condition, data: { ...(edge.data || {}), condition } } : edge));
   };
 
+  const updateNodeConfig = (key, value) => {
+    if (!selectedNodeId) return;
+    setNodes((nds) => nds.map(node => node.id === selectedNodeId ? {
+      ...node,
+      data: {
+        ...node.data,
+        config: {
+          ...(node.data.config || {}),
+          [key]: value,
+        },
+      },
+    } : node));
+  };
+
   const removeSelectedNode = () => {
     if (!selectedNodeId) return;
     setNodes((nds) => nds.filter(node => node.id !== selectedNodeId));
@@ -405,6 +527,22 @@ function WorkflowEditor({ workflowId }) {
                 </div>
               ))}
             </div>
+            <div className="p-4 border-y border-[#262626]">
+              <h2 className="font-mono text-[11px] text-white uppercase font-bold tracking-widest">UTILITY NODES</h2>
+            </div>
+            <div className="p-3 space-y-3">
+              <div
+                draggable
+                onDragStart={(event) => onUtilityDragStart(event, 'fetch_url')}
+                className="border border-blue-500/40 bg-blue-500/5 p-3 cursor-grab active:cursor-grabbing hover:border-blue-400 transition-colors"
+              >
+                <div className="flex items-center gap-2 mb-2">
+                  <span className="material-symbols-outlined text-blue-400 text-[16px]">link</span>
+                  <div className="font-mono text-[11px] text-white uppercase font-bold tracking-widest leading-tight">Fetch URL</div>
+                </div>
+                <p className="font-mono text-[9px] text-text-muted leading-relaxed">Fetches text content from a URL.</p>
+              </div>
+            </div>
           </aside>
 
           <main ref={wrapperRef} className="relative min-w-0 min-h-0">
@@ -437,9 +575,24 @@ function WorkflowEditor({ workflowId }) {
               <div className="p-4 space-y-6">
                 <div>
                   <h3 className="font-mono text-[14px] text-white uppercase font-bold tracking-widest mb-2">{selectedAgent?.name || selectedNode.data.label}</h3>
-                  <p className="font-mono text-[10px] text-text-muted leading-relaxed">{selectedAgent?.purpose || 'No purpose configured.'}</p>
-                  <Link to="/agents" className="font-mono text-[10px] text-primary uppercase tracking-widest mt-4 block hover:underline">View agent settings →</Link>
+                  <p className="font-mono text-[10px] text-text-muted leading-relaxed">{selectedAgent?.purpose || selectedDefinition?.description || 'No purpose configured.'}</p>
+                  {selectedNode.type === 'agent' && (
+                    <Link to="/agents" className="font-mono text-[10px] text-primary uppercase tracking-widest mt-4 block hover:underline">View agent settings →</Link>
+                  )}
                 </div>
+
+                {selectedNode.type === 'fetch_url' && (
+                  <div className="space-y-2">
+                    <label className="font-mono text-[9px] text-text-muted uppercase tracking-widest block">URL</label>
+                    <input
+                      value={selectedNode.data.config?.url || ''}
+                      onChange={(event) => updateNodeConfig('url', event.target.value)}
+                      placeholder={NODE_DEFINITIONS.fetch_url.config.url.placeholder}
+                      className="w-full bg-[#050505] border border-[#262626] text-white font-mono text-[11px] px-3 py-2 focus:outline-none focus:border-primary placeholder:text-[#404040]"
+                    />
+                    <p className="font-mono text-[9px] text-text-muted/70 leading-relaxed">Leave empty to use the previous node output as the URL.</p>
+                  </div>
+                )}
 
                 <div className="space-y-3">
                   <label className="font-mono text-[9px] text-text-muted uppercase tracking-widest block">EDGE CONDITIONS</label>
@@ -551,6 +704,18 @@ function CanvasTooltip({ onDismiss }) {
 }
 
 function toFlowNode(node, agentById) {
+  if (node.type === 'fetch_url') {
+    return {
+      id: node.id,
+      type: 'fetch_url',
+      position: node.position || { x: 0, y: 0 },
+      data: {
+        label: node.label || NODE_DEFINITIONS.fetch_url.label,
+        config: node.config || {},
+      },
+    };
+  }
+
   const agent = agentById.get(node.agentId);
   return {
     id: node.id,
@@ -565,8 +730,19 @@ function toFlowNode(node, agentById) {
 }
 
 function fromFlowNode(node) {
+  if (node.type === 'fetch_url') {
+    return {
+      id: node.id,
+      type: 'fetch_url',
+      label: node.data.label || NODE_DEFINITIONS.fetch_url.label,
+      config: node.data.config || {},
+      position: node.position,
+    };
+  }
+
   return {
     id: node.id,
+    type: 'agent',
     agentId: node.data.agentId,
     label: node.data.label || node.data.agent?.name || 'Agent',
     position: node.position,
@@ -608,6 +784,48 @@ function buildStarterWorkflow(agents) {
       { id: 'starter-e1', source: 'starter-1', target: 'starter-2', condition: '' },
       { id: 'starter-e2', source: 'starter-2', target: 'starter-3', condition: '' },
     ].filter((edge) => firstThree.length > Number(edge.target.split('-')[1]) - 1),
+  };
+}
+
+function buildWorkflowTemplatePayload(template, agents) {
+  const agentNodes = template.nodes.filter(node => node.type === 'agent');
+  const assignedAgents = new Map(agentNodes.map((node, index) => [node.id, agents[index % Math.max(agents.length, 1)]]));
+  const positionById = template.nodes.reduce((positions, node, index) => {
+    const row = index % 2;
+    const column = Math.floor(index / 2);
+    positions[node.id] = { x: column * 320, y: 120 + row * 180 };
+    return positions;
+  }, {});
+
+  return {
+    name: template.name.toUpperCase(),
+    description: template.description,
+    nodes: template.nodes.map((node) => {
+      if (node.type === 'fetch_url') {
+        return {
+          id: node.id,
+          type: 'fetch_url',
+          label: node.label,
+          config: node.config || {},
+          position: positionById[node.id],
+        };
+      }
+
+      const agent = assignedAgents.get(node.id);
+      return {
+        id: node.id,
+        type: 'agent',
+        agentId: agent?.id || null,
+        label: node.label,
+        position: positionById[node.id],
+      };
+    }),
+    edges: template.edges.map((edge, index) => ({
+      id: edge.id || `${template.id}-edge-${index + 1}`,
+      source: edge.source,
+      target: edge.target,
+      condition: edge.condition || '',
+    })),
   };
 }
 

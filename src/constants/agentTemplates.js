@@ -573,6 +573,145 @@ Principles:
 
 ]
 
+export const WORKFLOW_TEMPLATES = [
+  {
+    id: 'vendor-due-diligence',
+    name: 'Vendor Due Diligence',
+    category: 'compliance',
+    description: 'Research a vendor against DORA third-party risk requirements. Fetches public information and produces a structured assessment.',
+    badge: 'COMPLIANCE',
+    nodes: [
+      {
+        id: 'n1',
+        type: 'agent',
+        label: 'Research Planner',
+        systemPrompt: 'Given a vendor name, produce a JSON array of 3-5 URLs to fetch for due diligence research. Include the vendor website, LinkedIn, news articles, and any regulatory filings. Return ONLY a JSON array of URL strings.',
+      },
+      {
+        id: 'n2',
+        type: 'fetch_url',
+        label: 'Fetch Source 1',
+      },
+      {
+        id: 'n3',
+        type: 'fetch_url',
+        label: 'Fetch Source 2',
+      },
+      {
+        id: 'n4',
+        type: 'agent',
+        label: 'Synthesis Agent',
+        systemPrompt: `You are a DORA third-party risk assessor. Given fetched content from multiple sources about a vendor, produce a structured due diligence report with:
+
+VENDOR ASSESSMENT REPORT
+Vendor: [name]
+Assessment Date: [today]
+
+1. COMPANY OVERVIEW
+2. FINANCIAL STABILITY (evidence from sources)
+3. OPERATIONAL RESILIENCE (DORA Article 28-44 relevant factors)
+4. SECURITY POSTURE (certifications, incidents mentioned)
+5. CONCENTRATION RISK (market position, substitutability)
+6. RECOMMENDED ACTIONS (with priority: Critical/High/Medium)
+7. OVERALL RISK RATING: Low/Medium/High/Critical
+
+Cite specific sources for each finding.`,
+      },
+    ],
+    edges: [
+      { source: 'n1', target: 'n2' },
+      { source: 'n1', target: 'n3' },
+      { source: 'n2', target: 'n4' },
+      { source: 'n3', target: 'n4' },
+    ],
+  },
+  {
+    id: 'regulatory-monitoring',
+    name: 'Regulatory Change Monitor',
+    category: 'compliance',
+    description: 'Monitors specified regulatory sources for changes and produces a structured impact assessment.',
+    badge: 'REGULATORY',
+    nodes: [
+      {
+        id: 'n1',
+        type: 'fetch_url',
+        label: 'Fetch Regulatory Source',
+        config: { url: 'https://www.eba.europa.eu/regulation-and-policy/operational-resilience' },
+      },
+      {
+        id: 'n2',
+        type: 'agent',
+        label: 'Change Analyst',
+        systemPrompt: `You are a regulatory change analyst specialising in EU financial regulation (DORA, EU AI Act, GDPR, PSD3). 
+
+Given fetched content from a regulatory source, identify:
+1. Any new publications, consultations, or guidance
+2. Key changes from previous guidance (if identifiable)
+3. Impact on regulated institutions (credit institutions, payment firms, insurers)
+4. Compliance deadlines and timeline
+5. Recommended immediate actions
+
+Format as a structured regulatory change alert.`,
+      },
+    ],
+    edges: [{ source: 'n1', target: 'n2' }],
+  },
+  {
+    id: 'risk-research',
+    name: 'Risk Research Assistant',
+    category: 'compliance',
+    description: 'Researches a specific risk topic and produces a structured risk briefing with sources.',
+    badge: 'RISK',
+    nodes: [
+      {
+        id: 'n1',
+        type: 'agent',
+        label: 'Source Finder',
+        systemPrompt: 'Given a risk topic or question, return a JSON array of 3 authoritative URLs to research. Focus on: regulatory guidance, industry reports, and academic/professional sources. Return ONLY a JSON array of URL strings.',
+      },
+      {
+        id: 'n2',
+        type: 'fetch_url',
+        label: 'Fetch Source 1',
+      },
+      {
+        id: 'n3',
+        type: 'fetch_url',
+        label: 'Fetch Source 2',
+      },
+      {
+        id: 'n4',
+        type: 'agent',
+        label: 'Risk Briefing Writer',
+        systemPrompt: `Produce a structured risk research brief from the fetched sources:
+
+RISK RESEARCH BRIEF
+Topic: [from input]
+Date: [today]
+
+EXECUTIVE SUMMARY (2-3 sentences)
+
+KEY FINDINGS (5-7 bullet points)
+
+SOURCE ANALYSIS
+- Source 1: [key points]
+- Source 2: [key points]
+
+CONTRADICTIONS AND GAPS
+
+CONFIDENCE LEVEL: High/Medium/Low
+RECOMMENDED NEXT STEPS`,
+      },
+    ],
+    edges: [
+      { source: 'n1', target: 'n2' },
+      { source: 'n1', target: 'n3' },
+      { source: 'n2', target: 'n4' },
+      { source: 'n3', target: 'n4' },
+    ],
+  },
+]
+
 export const TEMPLATE_CATEGORIES = [
   { id: 'all', label: 'All Templates' },
   { id: 'general', label: 'General' },

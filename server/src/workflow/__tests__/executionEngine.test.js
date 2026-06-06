@@ -34,6 +34,7 @@ vi.mock('../../core/modelRelay.js', () => ({
 }))
 
 import { relay } from '../../core/modelRelay.js'
+import { log } from '../../audit/auditLogger.js'
 import { executeWorkflow } from '../executionEngine.js'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
@@ -81,6 +82,7 @@ beforeEach(() => {
 
 afterEach(() => {
   vi.clearAllMocks()
+  vi.unstubAllGlobals()
   if (db) db.close()
 })
 
@@ -92,6 +94,10 @@ function createWorkflow({ edges }) {
     position: { x: index * 100, y: 0 },
   }))
 
+  createCustomWorkflow({ nodes, edges })
+}
+
+function createCustomWorkflow({ nodes, edges, description = 'Start prompt' }) {
   db.prepare(
     `INSERT INTO workflows (id, tenant_id, name, description, nodes, edges, created_at, updated_at)
      VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
@@ -99,7 +105,7 @@ function createWorkflow({ edges }) {
     workflowId,
     tenantId,
     'Workflow',
-    'Start prompt',
+    description,
     JSON.stringify(nodes),
     JSON.stringify(edges),
     Date.now(),
@@ -190,5 +196,121 @@ describe('executeWorkflow', () => {
     const results = latestResults()
     expect(results.find(result => result.nodeId === 'n3').status).toBe('success')
     expect(relay).toHaveBeenCalledTimes(3)
+  })
+
+  it('fetch_url node - successful fetch returns plain text', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValueOnce({
+      ok: true,
+      headers: { get: () => 'text/html' },
+      text: async () => '<html><body><script>ignore()</script><p>DORA compliance text</p></body></html>',
+    }))
+
+    createCustomWorkflow({
+      nodes: [
+        {
+          id: 'fetch1',
+          type: 'fetch_url',
+          label: 'Fetch Source',
+          config: { url: 'https://example.com/dora' },
+          position: { x: 0, y: 0 },
+        },
+      ],
+      edges: [],
+    })
+
+    await executeWorkflow(workflowId, tenantId, db, runId)
+
+    const result = latestResults()[0]
+    expect(result.status).toBe('success')
+    expect(result.output).toBe('DORA compliance text')
+    expect(log).toHaveBeenCalledWith(
+      expect.objectContaining({
+        action: 'url_fetched',
+        metadata: expect.objectContaining({
+          url: 'https://example.com/dora',
+          workflowId,
+        }),
+      }),
+      db
+    )
+  })
+
+  it('fetch_url node - timeout returns failed status', async () => {
+    const timeoutError = new Error('abort')
+    timeoutError.name = 'AbortError'
+    vi.stubGlobal('fetch', vi.fn().mockRejectedValueOnce(timeoutError))
+
+    createCustomWorkflow({
+      nodes: [
+        {
+          id: 'fetch1',
+          type: 'fetch_url',
+          label: 'Fetch Source',
+          config: { url: 'https://example.com/slow' },
+          position: { x: 0, y: 0 },
+        },
+      ],
+      edges: [],
+    })
+
+    await executeWorkflow(workflowId, tenantId, db, runId)
+
+    const result = latestResults()[0]
+    expect(result.status).toBe('failed')
+    expect(result.error).toBe('timeout')
+  })
+
+  it('fetch_url node - max 10 URLs per run enforced', async () => {
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      headers: { get: () => 'text/plain' },
+      text: async () => 'Fetched source text',
+    })
+    vi.stubGlobal('fetch', fetchMock)
+
+    createCustomWorkflow({
+      nodes: Array.from({ length: 11 }, (_, index) => ({
+        id: `fetch${index + 1}`,
+        type: 'fetch_url',
+        label: `Fetch ${index + 1}`,
+        config: { url: `https://example.com/source-${index + 1}` },
+        position: { x: index * 100, y: 0 },
+      })),
+      edges: [],
+    })
+
+    await executeWorkflow(workflowId, tenantId, db, runId)
+
+    const results = latestResults()
+    expect(fetchMock).toHaveBeenCalledTimes(10)
+    expect(results.find(result => result.nodeId === 'fetch11')).toMatchObject({
+      status: 'skipped',
+      error: 'rate_limit',
+    })
+  })
+
+  it('fetch_url node - invalid URL returns failed', async () => {
+    const fetchMock = vi.fn()
+    vi.stubGlobal('fetch', fetchMock)
+
+    createCustomWorkflow({
+      nodes: [
+        {
+          id: 'fetch1',
+          type: 'fetch_url',
+          label: 'Fetch Source',
+          config: { url: 'not-a-url' },
+          position: { x: 0, y: 0 },
+        },
+      ],
+      edges: [],
+    })
+
+    await executeWorkflow(workflowId, tenantId, db, runId)
+
+    const result = latestResults()[0]
+    expect(result.status).toBe('failed')
+    expect(result.error).toBe('invalid_url')
+    expect(fetchMock).not.toHaveBeenCalled()
   })
 })

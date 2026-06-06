@@ -19,6 +19,12 @@ export async function executeWorkflow(workflowId, tenantId, db, runId = null, in
   const nodes = JSON.parse(workflow.nodes || '[]')
   const edges = JSON.parse(workflow.edges || '[]')
   const results = []
+  const context = {
+    workflow,
+    workflowId,
+    urlFetchCount: 0,
+    maxUrlFetches: 10,
+  }
 
   try {
     const graph = buildGraph(nodes, edges)
@@ -56,7 +62,7 @@ export async function executeWorkflow(workflowId, tenantId, db, runId = null, in
         })
       } else {
         const input = buildNodeInput(nodeId, workflow.description, predecessors, outputs)
-        const result = await executeNode(node, input, tenantId, db)
+        const result = await executeNode(node, input, tenantId, db, context)
         results.push(result)
         outputs.set(nodeId, result.output)
         completed.add(nodeId)
@@ -149,8 +155,13 @@ function buildNodeInput(nodeId, description, predecessors, outputs) {
     .join('\n\n') || 'Execute your task'
 }
 
-async function executeNode(node, input, tenantId, db) {
+async function executeNode(node, input, tenantId, db, context = {}) {
   const startedAt = Date.now()
+
+  if (node.type === 'fetch_url') {
+    return executeFetchUrlNode(node, input, tenantId, db, context, startedAt)
+  }
+
   const agent = db
     .prepare('SELECT * FROM agents WHERE id = ? AND tenant_id = ?')
     .get(node.agentId, tenantId)
@@ -204,4 +215,138 @@ async function executeNode(node, input, tenantId, db) {
       status: 'failed',
     }
   }
+}
+
+async function executeFetchUrlNode(node, input, tenantId, db, context, startedAt) {
+  if (context.urlFetchCount >= context.maxUrlFetches) {
+    return {
+      nodeId: node.id,
+      agentId: null,
+      output: 'URL fetch limit reached (max 10 per run)',
+      tokensUsed: 0,
+      durationMs: Date.now() - startedAt,
+      status: 'skipped',
+      error: 'rate_limit',
+    }
+  }
+
+  context.urlFetchCount += 1
+  const url = resolveFetchUrl(node, input)
+
+  if (!url || !String(url).startsWith('http')) {
+    return {
+      nodeId: node.id,
+      agentId: null,
+      output: 'Invalid URL',
+      tokensUsed: 0,
+      durationMs: Date.now() - startedAt,
+      status: 'failed',
+      error: 'invalid_url',
+    }
+  }
+
+  let timeout
+  try {
+    const controller = new AbortController()
+    timeout = setTimeout(() => controller.abort(), 10000)
+
+    const response = await fetch(url, {
+      signal: controller.signal,
+      headers: { 'User-Agent': 'Eudora-Research-Agent/1.0' },
+    })
+
+    if (!response.ok) {
+      return {
+        nodeId: node.id,
+        agentId: null,
+        output: `HTTP ${response.status}`,
+        tokensUsed: 0,
+        durationMs: Date.now() - startedAt,
+        status: 'failed',
+        error: 'fetch_failed',
+      }
+    }
+
+    const contentType = response.headers.get('content-type') || ''
+    if (!contentType.includes('text')) {
+      return {
+        nodeId: node.id,
+        agentId: null,
+        output: 'Non-text content',
+        tokensUsed: 0,
+        durationMs: Date.now() - startedAt,
+        status: 'failed',
+        error: 'non_text_content',
+      }
+    }
+
+    let text = await response.text()
+    text = text
+      .replace(/<script[^>]*>[\s\S]*?<\/script>/gi, '')
+      .replace(/<style[^>]*>[\s\S]*?<\/style>/gi, '')
+      .replace(/<[^>]+>/g, ' ')
+      .replace(/\s+/g, ' ')
+      .trim()
+
+    const maxChars = 50000
+    if (text.length > maxChars) {
+      text = `${text.substring(0, maxChars)}\n\n[Content truncated at 50,000 characters]`
+    }
+
+    log({
+      tenantId,
+      userId: null,
+      action: 'url_fetched',
+      riskScore: 0,
+      metadata: {
+        url,
+        contentLength: text.length,
+        workflowId: context.workflowId,
+      },
+    }, db)
+
+    return {
+      nodeId: node.id,
+      agentId: null,
+      output: text,
+      tokensUsed: 0,
+      durationMs: Date.now() - startedAt,
+      status: 'success',
+    }
+  } catch (err) {
+    return {
+      nodeId: node.id,
+      agentId: null,
+      output: err.name === 'AbortError' ? 'Request timed out' : err.message,
+      tokensUsed: 0,
+      durationMs: Date.now() - startedAt,
+      status: 'failed',
+      error: err.name === 'AbortError' ? 'timeout' : 'fetch_error',
+    }
+  } finally {
+    if (timeout) clearTimeout(timeout)
+  }
+}
+
+function resolveFetchUrl(node, input) {
+  if (node.config?.url) return node.config.url
+
+  const raw = String(input || '').trim()
+  const labelMatch = String(node.label || '').match(/(\d+)/)
+  const preferredIndex = Number.isInteger(node.config?.urlIndex)
+    ? node.config.urlIndex
+    : Math.max(0, Number(labelMatch?.[1] || 1) - 1)
+
+  try {
+    const parsed = JSON.parse(raw)
+    if (Array.isArray(parsed)) {
+      const urls = parsed.filter(item => typeof item === 'string' && item.startsWith('http'))
+      return urls[preferredIndex] || urls[0] || raw
+    }
+  } catch {
+    // Fall through to text URL extraction.
+  }
+
+  const urls = raw.match(/https?:\/\/[^\s"',\]]+/g) || []
+  return urls[preferredIndex] || urls[0] || raw
 }
