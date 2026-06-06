@@ -69,6 +69,8 @@ async function start() {
     'GET /health/ollama',
     'POST /auth/register',
     'POST /auth/login',
+    'POST /auth/forgot-password',
+    'POST /auth/reset-password',
     'POST /auth/refresh',
     'POST /billing/webhook',
     'GET /auth/oauth/callback/openai',

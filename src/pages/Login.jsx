@@ -17,6 +17,7 @@ export default function Login() {
   const [name, setName] = useState('');
   const [isLoading, setIsLoading] = useState(false);
   const [authError, setAuthError] = useState('');
+  const [forgotSent, setForgotSent] = useState(false);
   
   const navigate = useNavigate();
 
@@ -92,6 +93,19 @@ export default function Login() {
     return onboardingCompleted ? '/agents' : '/onboarding';
   };
 
+  const handleForgotPassword = async () => {
+    setIsLoading(true);
+    setAuthError('');
+    try {
+      await api.post('/auth/forgot-password', { email });
+    } catch {
+      // Always show the same response to avoid exposing registered emails.
+    } finally {
+      setForgotSent(true);
+      setIsLoading(false);
+    }
+  };
+
   const getPasswordStrength = () => {
     if (!password) return 0;
     if (password.length < 8) return 1;
@@ -157,6 +171,50 @@ export default function Login() {
               </button>
             </div>
 
+            {activeTab === 'forgot' ? (
+              <div className="space-y-4">
+                <p className="font-mono text-[11px] text-text-muted">
+                  Enter your email and we'll send you a reset link.
+                </p>
+                <div className="space-y-1">
+                  <label className="font-mono text-[10px] text-text-muted uppercase tracking-widest">
+                    Email address
+                  </label>
+                  <input
+                    type="email"
+                    value={email}
+                    onChange={e => setEmail(e.target.value)}
+                    className="w-full bg-[#050505] border border-[#262626] text-white font-mono text-[13px] px-4 py-3 focus:outline-none focus:border-primary"
+                    placeholder="your@email.com"
+                  />
+                </div>
+
+                {forgotSent ? (
+                  <div className="border border-primary/30 bg-primary/5 p-4">
+                    <p className="font-mono text-[11px] text-primary">
+                      If that email exists, a reset link has been sent. Check your inbox.
+                    </p>
+                  </div>
+                ) : (
+                  <button
+                    type="button"
+                    onClick={handleForgotPassword}
+                    disabled={isLoading || !email}
+                    className="w-full bg-primary text-[#050505] font-mono text-[11px] uppercase tracking-widest py-3 font-bold hover:bg-primary/90 transition-colors cursor-pointer disabled:opacity-50"
+                  >
+                    {isLoading ? 'Sending...' : 'Send Reset Link'}
+                  </button>
+                )}
+
+                <button
+                  type="button"
+                  onClick={() => { setActiveTab('signin'); setForgotSent(false); }}
+                  className="w-full font-mono text-[10px] text-text-muted hover:text-primary uppercase tracking-widest cursor-pointer transition-colors"
+                >
+                  ← Back to login
+                </button>
+              </div>
+            ) : (
             <form className="space-y-6" onSubmit={handleAuth}>
               {activeTab === 'create' && (
                 <div className="space-y-2">
@@ -192,7 +250,7 @@ export default function Login() {
                 <div className="flex justify-between items-end">
                   <label className="font-mono text-[10px] text-[#A3A3A3] uppercase tracking-[0.15em] block">Secure Password</label>
                   {activeTab === 'signin' && (
-                    <button type="button" className="font-mono text-[10px] text-primary hover:underline uppercase tracking-tight transition-all">Recover Key</button>
+                    <span className="font-mono text-[10px] text-primary uppercase tracking-tight">Secure Access</span>
                   )}
                 </div>
                 <div className="relative group/input flex flex-col gap-2">
@@ -215,6 +273,18 @@ export default function Login() {
                   )}
                 </div>
               </div>
+
+              {activeTab === 'signin' && (
+                <div className="text-right -mt-2">
+                  <button
+                    type="button"
+                    onClick={() => setActiveTab('forgot')}
+                    className="font-mono text-[10px] text-text-muted hover:text-primary transition-colors uppercase tracking-widest cursor-pointer"
+                  >
+                    Forgot password?
+                  </button>
+                </div>
+              )}
 
               {activeTab === 'create' && (
                 <div className="space-y-2">
@@ -266,6 +336,7 @@ export default function Login() {
                 </>
               )}
             </form>
+            )}
           </div>
           <p className="mt-8 text-center font-mono text-[10px] text-[#A3A3A3]/40 uppercase tracking-[0.2em]">
             Protected by Eudora Sentinel AI Protocol

@@ -18,6 +18,7 @@ import TrialExpired from './pages/TrialExpired'
 import BillingSuccess from './pages/BillingSuccess'
 import Templates from './pages/Templates'
 import SelfHostedSetup from './pages/SelfHostedSetup'
+import ResetPassword from './pages/ResetPassword'
 
 function ProtectedRoute({ children }) {
   const { isAuthenticated, user } = useAuthStore()
@@ -91,6 +92,7 @@ export default function App() {
     <BrowserRouter>
       <Routes>
         <Route path="/login" element={<AuthRoute><Login /></AuthRoute>} />
+        <Route path="/reset-password" element={<ResetPassword />} />
         <Route path="/onboarding" element={<Onboarding />} />
         <Route path="/setup" element={<ProtectedRoute><SelfHostedSetup /></ProtectedRoute>} />
         <Route path="/billing/success" element={<BillingSuccess />} />

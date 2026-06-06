@@ -1,4 +1,5 @@
 import { nanoid } from 'nanoid'
+import { randomBytes } from 'crypto'
 import {
   hashPassword,
   verifyPassword,
@@ -10,6 +11,8 @@ import authenticate from '../middleware/auth.js'
 import { seedFeatureFlags } from '../billing/canAccess.js'
 import { createState, validateState } from '../utils/oauthState.js'
 import { encrypt } from '../utils/encryption.js'
+
+const resetTokens = new Map()
 
 function isValidEmail(email) {
   return typeof email === 'string' && /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)
@@ -90,6 +93,72 @@ export default async function authRoutes(fastify) {
       },
       onboardingCompleted: user.onboarding_completed === 1,
     })
+  })
+
+  fastify.post('/auth/forgot-password', async (request, reply) => {
+    const { email } = request.body || {}
+    if (!email) {
+      return reply.code(400).send({ error: 'email_required' })
+    }
+
+    const normalisedEmail = String(email).trim().toLowerCase()
+    const user = db.prepare('SELECT * FROM users WHERE LOWER(email) = ?').get(normalisedEmail)
+    const message = 'If that email exists, a reset link has been sent.'
+
+    if (!user) {
+      return reply.send({ message })
+    }
+
+    const token = randomBytes(32).toString('hex')
+    resetTokens.set(token, {
+      userId: user.id,
+      email: user.email,
+      expiresAt: Date.now() + 60 * 60 * 1000,
+    })
+
+    const clientUrl = process.env.CLIENT_URL || 'http://localhost:5173'
+    const resetUrl = `${clientUrl}/reset-password?token=${token}`
+    console.log(`[password-reset] Reset URL for ${user.email}: ${resetUrl}`)
+
+    return reply.send({ message })
+  })
+
+  fastify.post('/auth/reset-password', async (request, reply) => {
+    const { token, password } = request.body || {}
+
+    if (!token || !password) {
+      return reply.code(400).send({ error: 'token_and_password_required' })
+    }
+
+    if (password.length < 8) {
+      return reply.code(400).send({
+        error: 'password_too_short',
+        message: 'Password must be at least 8 characters',
+      })
+    }
+
+    const record = resetTokens.get(token)
+    if (!record) {
+      return reply.code(400).send({
+        error: 'invalid_token',
+        message: 'Invalid or expired reset token',
+      })
+    }
+
+    if (Date.now() > record.expiresAt) {
+      resetTokens.delete(token)
+      return reply.code(400).send({
+        error: 'token_expired',
+        message: 'Reset token has expired. Please request a new one.',
+      })
+    }
+
+    const passwordHash = await hashPassword(password)
+    db.prepare('UPDATE users SET password_hash = ? WHERE id = ?').run(passwordHash, record.userId)
+    db.prepare('DELETE FROM refresh_tokens WHERE user_id = ?').run(record.userId)
+    resetTokens.delete(token)
+
+    return reply.send({ message: 'Password updated successfully.' })
   })
 
   fastify.post('/auth/refresh', async (request, reply) => {
