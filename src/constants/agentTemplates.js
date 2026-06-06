@@ -777,6 +777,99 @@ Return ONLY the JSON, no other text.`,
     ],
     edges: [{ source: 'n1', target: 'n2' }],
   },
+  {
+    id: 'slack-compliance-daily',
+    name: 'Daily Compliance Summary to Slack',
+    category: 'compliance',
+    description: 'Generates a daily AI compliance summary and posts it to a Slack channel via webhook.',
+    badge: 'AUTOMATION',
+    nodes: [
+      {
+        id: 'n1',
+        type: 'agent',
+        label: 'Compliance Summariser',
+        systemPrompt: `You are a compliance reporting assistant. Generate a concise daily compliance summary in Slack markdown format covering:
+- Total AI interactions today
+- Any flagged or blocked requests
+- Risk level assessment (LOW/MEDIUM/HIGH)
+- Recommended actions if any
+
+Format as a Slack message with emoji for visual scanning. Keep it under 500 words.`,
+      },
+      {
+        id: 'n2',
+        type: 'webhook_out',
+        label: 'Post to Slack',
+        config: {
+          url: '',
+          payloadMode: 'custom',
+          customPayload: '{"text": "🛡️ *Eudora Daily Compliance Report*\\n{{input}}"}',
+        },
+      },
+    ],
+    edges: [{ source: 'n1', target: 'n2' }],
+  },
+  {
+    id: 'jira-compliance-ticket',
+    name: 'Create Jira Ticket on Risk Detection',
+    category: 'compliance',
+    description: 'When a high-risk event is detected, creates a Jira ticket automatically via webhook.',
+    badge: 'INCIDENT',
+    nodes: [
+      {
+        id: 'n1',
+        type: 'agent',
+        label: 'Incident Formatter',
+        systemPrompt: `You are a compliance incident reporter. Format the input as a Jira ticket JSON:
+{
+  "fields": {
+    "project": {"key": "COMP"},
+    "summary": "[Eudora] AI Compliance Incident — {brief description}",
+    "description": "{detailed description of the incident}",
+    "issuetype": {"name": "Bug"},
+    "priority": {"name": "High"}
+  }
+}
+Return ONLY the JSON, no other text.`,
+      },
+      {
+        id: 'n2',
+        type: 'webhook_out',
+        label: 'Create Jira Ticket',
+        config: {
+          url: '',
+          payloadMode: 'raw',
+          headers: 'Authorization: Basic {base64-encoded-credentials}\nContent-Type: application/json',
+        },
+      },
+    ],
+    edges: [{ source: 'n1', target: 'n2' }],
+  },
+  {
+    id: 'zapier-alert',
+    name: 'Zapier Compliance Alert',
+    category: 'compliance',
+    description: 'Sends compliance events to Zapier to trigger any downstream automation (email, calendar, CRM, etc.)',
+    badge: 'INTEGRATION',
+    nodes: [
+      {
+        id: 'n1',
+        type: 'agent',
+        label: 'Alert Builder',
+        systemPrompt: 'Summarise the compliance event in 2-3 sentences suitable for an automated alert. Include: what happened, risk level, and recommended action. Be concise and factual.',
+      },
+      {
+        id: 'n2',
+        type: 'webhook_out',
+        label: 'Send to Zapier',
+        config: {
+          url: '',
+          payloadMode: 'auto',
+        },
+      },
+    ],
+    edges: [{ source: 'n1', target: 'n2' }],
+  },
 ]
 
 export const TEMPLATE_CATEGORIES = [

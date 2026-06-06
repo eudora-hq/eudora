@@ -45,6 +45,28 @@ const NODE_DEFINITIONS = {
       body: { type: 'textarea', label: 'Request Body (JSON)', placeholder: '{"key": "value"}' },
     },
   },
+  webhook_out: {
+    label: 'Webhook Out',
+    icon: 'webhook',
+    description: 'POST workflow results to any external endpoint (Zapier, Slack, Make, Jira, etc.)',
+    color: 'border-orange-500/40 bg-orange-500/5',
+    config: {
+      url: { type: 'text', label: 'Webhook URL', placeholder: 'https://hooks.slack.com/services/... or https://hooks.zapier.com/...' },
+      payloadMode: {
+        type: 'select',
+        label: 'Payload Mode',
+        options: [
+          { value: 'auto', label: 'Auto - Eudora envelope (recommended)' },
+          { value: 'raw', label: 'Raw - send input directly' },
+          { value: 'custom', label: 'Custom - use JSON template' },
+        ],
+        default: 'auto',
+      },
+      customPayload: { type: 'textarea', label: 'Custom JSON Template (use {{input}} for workflow output)', placeholder: '{"text": "Eudora alert: {{input}}"}' },
+      secret: { type: 'password', label: 'Webhook Secret (optional - for HMAC signature)', placeholder: 'your-webhook-secret' },
+      headers: { type: 'textarea', label: 'Custom Headers (optional, one per line: Key: Value)', placeholder: 'Authorization: Bearer token\nX-Custom: value' },
+    },
+  },
 };
 
 function AgentNode({ data, selected }) {
@@ -116,7 +138,35 @@ function FetchApiNode({ data, selected }) {
   );
 }
 
-const nodeTypes = { agent: AgentNode, fetch_url: FetchUrlNode, fetch_api: FetchApiNode };
+function WebhookOutNode({ data, selected }) {
+  return (
+    <div className={`w-[240px] border bg-[#0a0a0a] p-4 transition-colors ${selected ? 'border-orange-400' : 'border-orange-500/40'}`}>
+      <Handle type="target" position={Position.Left} className="!w-3 !h-3 !bg-orange-400 !border-[#050505]" />
+      <div className="flex items-start justify-between gap-3 mb-3">
+        <div className="flex items-center gap-2 min-w-0">
+          <span className="material-symbols-outlined text-orange-400 text-[18px]">webhook</span>
+          <h3 className="font-mono text-[12px] text-white uppercase font-bold tracking-widest leading-tight">{data.label || 'WEBHOOK OUT'}</h3>
+        </div>
+        <span className="border border-orange-500/40 bg-orange-500/10 px-2 py-1 font-mono text-[8px] text-orange-400 uppercase tracking-widest shrink-0">
+          POST
+        </span>
+      </div>
+      <p
+        className="font-mono text-[10px] text-text-muted leading-relaxed overflow-hidden"
+        style={{ display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical' }}
+      >
+        {data.config?.url || 'Configure an external endpoint to receive workflow output.'}
+      </p>
+    </div>
+  );
+}
+
+const nodeTypes = {
+  agent: AgentNode,
+  fetch_url: FetchUrlNode,
+  fetch_api: FetchApiNode,
+  webhook_out: WebhookOutNode,
+};
 
 export default function WorkflowCanvas() {
   const { id } = useParams();
@@ -595,6 +645,17 @@ function WorkflowEditor({ workflowId }) {
                 </div>
                 <p className="font-mono text-[9px] text-text-muted leading-relaxed">Calls a REST API with headers and authentication.</p>
               </div>
+              <div
+                draggable
+                onDragStart={(event) => onUtilityDragStart(event, 'webhook_out')}
+                className="border border-orange-500/40 bg-orange-500/5 p-3 cursor-grab active:cursor-grabbing hover:border-orange-400 transition-colors"
+              >
+                <div className="flex items-center gap-2 mb-2">
+                  <span className="material-symbols-outlined text-orange-400 text-[16px]">webhook</span>
+                  <div className="font-mono text-[11px] text-white uppercase font-bold tracking-widest leading-tight">Webhook Out</div>
+                </div>
+                <p className="font-mono text-[9px] text-text-muted leading-relaxed">POSTs workflow output to an external endpoint.</p>
+              </div>
             </div>
           </aside>
 
@@ -690,6 +751,38 @@ function WorkflowEditor({ workflowId }) {
                         onChange={(value) => updateNodeConfig('body', value)}
                       />
                     )}
+                  </div>
+                )}
+
+                {selectedNode.type === 'webhook_out' && (
+                  <div className="space-y-4">
+                    <ConfigInput
+                      field={NODE_DEFINITIONS.webhook_out.config.url}
+                      value={selectedNode.data.config?.url || ''}
+                      onChange={(value) => updateNodeConfig('url', value)}
+                    />
+                    <ConfigInput
+                      field={NODE_DEFINITIONS.webhook_out.config.payloadMode}
+                      value={selectedNode.data.config?.payloadMode || 'auto'}
+                      onChange={(value) => updateNodeConfig('payloadMode', value)}
+                    />
+                    {selectedNode.data.config?.payloadMode === 'custom' && (
+                      <ConfigInput
+                        field={NODE_DEFINITIONS.webhook_out.config.customPayload}
+                        value={selectedNode.data.config?.customPayload || ''}
+                        onChange={(value) => updateNodeConfig('customPayload', value)}
+                      />
+                    )}
+                    <ConfigInput
+                      field={NODE_DEFINITIONS.webhook_out.config.secret}
+                      value={selectedNode.data.config?.secret || ''}
+                      onChange={(value) => updateNodeConfig('secret', value)}
+                    />
+                    <ConfigInput
+                      field={NODE_DEFINITIONS.webhook_out.config.headers}
+                      value={selectedNode.data.config?.headers || ''}
+                      onChange={(value) => updateNodeConfig('headers', value)}
+                    />
                   </div>
                 )}
 
@@ -810,7 +903,11 @@ function ConfigInput({ field, value, onChange }) {
       <label className="font-mono text-[9px] text-text-muted uppercase tracking-widest block">{field.label}</label>
       {field.type === 'select' ? (
         <select value={value} onChange={(event) => onChange(event.target.value)} className={baseClass}>
-          {field.options.map(option => <option key={option} value={option}>{option.toUpperCase()}</option>)}
+          {field.options.map((option) => {
+            const optionValue = typeof option === 'string' ? option : option.value;
+            const optionLabel = typeof option === 'string' ? option.toUpperCase() : option.label;
+            return <option key={optionValue} value={optionValue}>{optionLabel}</option>;
+          })}
         </select>
       ) : field.type === 'textarea' ? (
         <textarea
@@ -834,7 +931,7 @@ function ConfigInput({ field, value, onChange }) {
 }
 
 function toFlowNode(node, agentById) {
-  if (node.type === 'fetch_url' || node.type === 'fetch_api') {
+  if (node.type === 'fetch_url' || node.type === 'fetch_api' || node.type === 'webhook_out') {
     const definition = NODE_DEFINITIONS[node.type];
     return {
       id: node.id,
@@ -861,7 +958,7 @@ function toFlowNode(node, agentById) {
 }
 
 function fromFlowNode(node) {
-  if (node.type === 'fetch_url' || node.type === 'fetch_api') {
+  if (node.type === 'fetch_url' || node.type === 'fetch_api' || node.type === 'webhook_out') {
     const definition = NODE_DEFINITIONS[node.type];
     return {
       id: node.id,
@@ -933,7 +1030,7 @@ function buildWorkflowTemplatePayload(template, agents) {
     name: template.name.toUpperCase(),
     description: template.description,
     nodes: template.nodes.map((node) => {
-      if (node.type === 'fetch_url' || node.type === 'fetch_api') {
+      if (node.type === 'fetch_url' || node.type === 'fetch_api' || node.type === 'webhook_out') {
         return {
           id: node.id,
           type: node.type,

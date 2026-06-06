@@ -1,4 +1,5 @@
 import { nanoid } from 'nanoid'
+import { createHmac } from 'crypto'
 import { sanitise } from '../security/sanitiser.js'
 import { guard } from '../security/guardLayer.js'
 import { retrieve } from '../core/contextRetriever.js'
@@ -164,6 +165,10 @@ async function executeNode(node, input, tenantId, db, context = {}) {
 
   if (node.type === 'fetch_api') {
     return executeFetchApiNode(node, input, tenantId, db, context, startedAt)
+  }
+
+  if (node.type === 'webhook_out') {
+    return executeWebhookOutNode(node, input, tenantId, db, context, startedAt)
   }
 
   const agent = db
@@ -475,6 +480,134 @@ async function executeFetchApiNode(node, input, tenantId, db, context, startedAt
   } finally {
     if (timeout) clearTimeout(timeout)
   }
+}
+
+async function executeWebhookOutNode(node, input, tenantId, db, context, startedAt) {
+  const config = node.config || {}
+  const url = config.url
+
+  if (!url || (!String(url).startsWith('http://') && !String(url).startsWith('https://'))) {
+    return {
+      nodeId: node.id,
+      agentId: null,
+      output: 'No webhook URL configured',
+      tokensUsed: 0,
+      durationMs: Date.now() - startedAt,
+      status: 'failed',
+      error: 'missing_url',
+    }
+  }
+
+  const payloadMode = config.payloadMode || 'auto'
+  const payload = buildWebhookPayload(payloadMode, config.customPayload, input, {
+    workflowId: context.workflowId,
+    nodeId: node.id,
+    tenantId,
+  })
+
+  let timeout
+  try {
+    const controller = new AbortController()
+    timeout = setTimeout(() => controller.abort(), 10000)
+
+    const headers = {
+      'Content-Type': 'application/json',
+      'User-Agent': 'Eudora-Webhook/1.0',
+      'X-Eudora-Workflow': context.workflowId,
+      ...parseHeaders(config.headers || ''),
+    }
+
+    if (config.secret) {
+      const signature = createHmac('sha256', config.secret).update(payload).digest('hex')
+      headers['X-Eudora-Signature'] = `sha256=${signature}`
+    }
+
+    const response = await fetch(String(url), {
+      method: 'POST',
+      headers,
+      body: payload,
+      signal: controller.signal,
+    })
+    const responseText = await response.text()
+
+    log({
+      tenantId,
+      userId: null,
+      action: 'webhook_delivered',
+      riskScore: 0,
+      metadata: {
+        url: String(url),
+        statusCode: response.status,
+        payloadMode,
+        workflowId: context.workflowId,
+        signed: Boolean(config.secret),
+      },
+    }, db)
+
+    if (!response.ok) {
+      return {
+        nodeId: node.id,
+        agentId: null,
+        output: `Webhook failed - HTTP ${response.status}: ${responseText.substring(0, 200)}`,
+        tokensUsed: 0,
+        durationMs: Date.now() - startedAt,
+        status: 'failed',
+        error: 'http_error',
+      }
+    }
+
+    const responseSummary = responseText
+      ? `: ${responseText.substring(0, 500)}`
+      : ''
+    return {
+      nodeId: node.id,
+      agentId: null,
+      output: `Webhook delivered - HTTP ${response.status}${responseSummary}`,
+      tokensUsed: 0,
+      durationMs: Date.now() - startedAt,
+      status: 'success',
+    }
+  } catch (err) {
+    return {
+      nodeId: node.id,
+      agentId: null,
+      output: err.name === 'AbortError' ? 'Webhook timed out' : err.message,
+      tokensUsed: 0,
+      durationMs: Date.now() - startedAt,
+      status: 'failed',
+      error: err.name === 'AbortError' ? 'timeout' : 'delivery_error',
+    }
+  } finally {
+    if (timeout) clearTimeout(timeout)
+  }
+}
+
+function buildWebhookPayload(payloadMode, customPayload, input, context) {
+  if (payloadMode === 'raw') {
+    return typeof input === 'string' ? input : JSON.stringify(input)
+  }
+
+  if (payloadMode === 'custom' && customPayload) {
+    try {
+      const serialisedInput = JSON.stringify(input)
+      const template = String(customPayload)
+        .replace(/"\{\{input\}\}"/g, serialisedInput)
+        .replace(/\{\{input\}\}/g, serialisedInput)
+      JSON.parse(template)
+      return template
+    } catch {
+      return JSON.stringify({ data: input })
+    }
+  }
+
+  return JSON.stringify({
+    source: 'eudora',
+    workflowId: context.workflowId,
+    nodeId: context.nodeId,
+    timestamp: new Date().toISOString(),
+    data: input,
+    tenantId: context.tenantId,
+  })
 }
 
 function parseHeaders(headersString) {

@@ -530,3 +530,196 @@ describe('fetch_api node', () => {
     expect(result.output).toContain('[Response truncated at 50,000 characters]')
   })
 })
+
+describe('webhook_out node', () => {
+  function createWebhookWorkflow(config, description = 'workflow result') {
+    createCustomWorkflow({
+      nodes: [
+        {
+          id: 'webhook1',
+          type: 'webhook_out',
+          label: 'Webhook Out',
+          config,
+          position: { x: 0, y: 0 },
+        },
+      ],
+      edges: [],
+      description,
+    })
+  }
+
+  it('auto mode - posts Eudora envelope with correct fields', async () => {
+    const fetchMock = vi.fn().mockResolvedValueOnce({
+      ok: true,
+      status: 200,
+      text: async () => 'ok',
+    })
+    vi.stubGlobal('fetch', fetchMock)
+    createWebhookWorkflow({
+      url: 'https://example.com/hook',
+      payloadMode: 'auto',
+    })
+
+    await executeWorkflow(workflowId, tenantId, db, runId)
+
+    expect(fetchMock).toHaveBeenCalledWith(
+      'https://example.com/hook',
+      expect.objectContaining({
+        method: 'POST',
+        headers: expect.objectContaining({
+          'Content-Type': 'application/json',
+          'User-Agent': 'Eudora-Webhook/1.0',
+          'X-Eudora-Workflow': workflowId,
+        }),
+      })
+    )
+    const requestBody = JSON.parse(fetchMock.mock.calls[0][1].body)
+    expect(requestBody).toMatchObject({
+      source: 'eudora',
+      workflowId,
+      nodeId: 'webhook1',
+      data: 'workflow result',
+      tenantId,
+    })
+    expect(new Date(requestBody.timestamp).toISOString()).toBe(requestBody.timestamp)
+    expect(latestResults()[0]).toMatchObject({
+      status: 'success',
+      output: expect.stringContaining('HTTP 200'),
+    })
+    expect(log).toHaveBeenCalledWith(
+      expect.objectContaining({
+        action: 'webhook_delivered',
+        metadata: expect.objectContaining({
+          url: 'https://example.com/hook',
+          statusCode: 200,
+          payloadMode: 'auto',
+          workflowId,
+          signed: false,
+        }),
+      }),
+      db
+    )
+  })
+
+  it('raw mode - sends input directly as body', async () => {
+    const fetchMock = vi.fn().mockResolvedValueOnce({
+      ok: true,
+      status: 200,
+      text: async () => '',
+    })
+    vi.stubGlobal('fetch', fetchMock)
+    createWebhookWorkflow({
+      url: 'https://example.com/hook',
+      payloadMode: 'raw',
+    }, 'plain text output')
+
+    await executeWorkflow(workflowId, tenantId, db, runId)
+
+    expect(fetchMock.mock.calls[0][1].body).toBe('plain text output')
+  })
+
+  it('custom mode - replaces {{input}} placeholder', async () => {
+    const fetchMock = vi.fn().mockResolvedValueOnce({
+      ok: true,
+      status: 200,
+      text: async () => '',
+    })
+    vi.stubGlobal('fetch', fetchMock)
+    createWebhookWorkflow({
+      url: 'https://example.com/hook',
+      payloadMode: 'custom',
+      customPayload: '{"text":"{{input}}"}',
+    }, 'compliance alert')
+
+    await executeWorkflow(workflowId, tenantId, db, runId)
+
+    expect(JSON.parse(fetchMock.mock.calls[0][1].body)).toEqual({
+      text: 'compliance alert',
+    })
+  })
+
+  it('with secret - adds signature and custom headers', async () => {
+    const fetchMock = vi.fn().mockResolvedValueOnce({
+      ok: true,
+      status: 200,
+      text: async () => '',
+    })
+    vi.stubGlobal('fetch', fetchMock)
+    createWebhookWorkflow({
+      url: 'https://example.com/hook',
+      payloadMode: 'auto',
+      secret: 'mysecret',
+      headers: 'Authorization: Bearer token\nX-Custom: value',
+    })
+
+    await executeWorkflow(workflowId, tenantId, db, runId)
+
+    expect(fetchMock.mock.calls[0][1].headers).toEqual(
+      expect.objectContaining({
+        Authorization: 'Bearer token',
+        'X-Custom': 'value',
+        'X-Eudora-Signature': expect.stringMatching(/^sha256=[0-9a-f]{64}$/),
+      })
+    )
+    expect(log).toHaveBeenCalledWith(
+      expect.objectContaining({
+        action: 'webhook_delivered',
+        metadata: expect.objectContaining({ signed: true }),
+      }),
+      db
+    )
+  })
+
+  it('HTTP 4xx - returns failed status', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValueOnce({
+      ok: false,
+      status: 400,
+      text: async () => 'Bad Request',
+    }))
+    createWebhookWorkflow({
+      url: 'https://example.com/hook',
+      payloadMode: 'auto',
+    })
+
+    await executeWorkflow(workflowId, tenantId, db, runId)
+
+    expect(latestResults()[0]).toMatchObject({
+      status: 'failed',
+      output: expect.stringContaining('HTTP 400'),
+      error: 'http_error',
+    })
+  })
+
+  it('timeout - returns failed with timeout error', async () => {
+    const timeoutError = new Error('abort')
+    timeoutError.name = 'AbortError'
+    vi.stubGlobal('fetch', vi.fn().mockRejectedValueOnce(timeoutError))
+    createWebhookWorkflow({
+      url: 'https://example.com/hook',
+      payloadMode: 'auto',
+    })
+
+    await executeWorkflow(workflowId, tenantId, db, runId)
+
+    expect(latestResults()[0]).toMatchObject({
+      status: 'failed',
+      output: 'Webhook timed out',
+      error: 'timeout',
+    })
+  })
+
+  it('missing URL - returns failed without calling fetch', async () => {
+    const fetchMock = vi.fn()
+    vi.stubGlobal('fetch', fetchMock)
+    createWebhookWorkflow({ payloadMode: 'auto' })
+
+    await executeWorkflow(workflowId, tenantId, db, runId)
+
+    expect(latestResults()[0]).toMatchObject({
+      status: 'failed',
+      output: 'No webhook URL configured',
+      error: 'missing_url',
+    })
+    expect(fetchMock).not.toHaveBeenCalled()
+  })
+})
