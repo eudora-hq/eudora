@@ -41,7 +41,7 @@ export default function Sidebar() {
       </div>
 
       {/* Navigation */}
-      <nav className="flex-1 py-4 overflow-y-auto">
+      <nav className="flex-1 py-4 overflow-y-auto min-h-0">
         <div className="space-y-1">
           {navItems.map((item) => {
             const link = (
@@ -114,7 +114,7 @@ export default function Sidebar() {
       </div>
 
       {isSelfHosted && (
-        <div className="border-t border-[#1a1a1a] p-4 mt-auto">
+        <div className="border-t border-[#1a1a1a] p-4">
           <div className="space-y-2">
             <p className="font-mono text-[9px] text-text-muted uppercase tracking-widest leading-relaxed">
               Self-Hosted

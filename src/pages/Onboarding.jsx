@@ -77,9 +77,17 @@ export default function Onboarding() {
             <span className="font-mono text-[9px] tracking-[0.2em] text-primary uppercase">SECURE LINK ACTIVE</span>
           </div>
           <span className="material-symbols-outlined text-text-muted text-[20px]">notifications</span>
-          <div className="w-8 h-8 bg-[#0a0a0a] border border-[#262626] flex items-center justify-center">
-             <span className="material-symbols-outlined text-text-muted text-[18px]">person</span>
-          </div>
+          <button
+            onClick={async () => {
+              try { await api.post('/auth/logout', { refreshToken }) } catch {}
+              clearAuth()
+              navigate('/login')
+            }}
+            className="w-8 h-8 bg-[#0a0a0a] border border-[#262626] flex items-center justify-center hover:border-primary/40 transition-colors"
+            title="Sign out"
+          >
+            <span className="material-symbols-outlined text-text-muted text-[18px]">logout</span>
+          </button>
         </div>
       </header>
 
