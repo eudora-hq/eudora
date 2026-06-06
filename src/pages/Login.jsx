@@ -1,10 +1,16 @@
 import { useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useSearchParams } from 'react-router-dom';
 import { useAuthStore } from '../store/authStore';
 import api from '../api/client';
 
 export default function Login() {
-  const [activeTab, setActiveTab] = useState('signin');
+  const [searchParams] = useSearchParams();
+  const planParam = searchParams.get('plan');
+  const tabParam = searchParams.get('tab');
+  const selectedPlan = ['starter', 'professional', 'enterprise'].includes(planParam) ? planParam : null;
+  const [activeTab, setActiveTab] = useState(
+    tabParam === 'register' || planParam ? 'create' : 'signin'
+  );
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
@@ -34,6 +40,18 @@ export default function Login() {
       };
 
       useAuthStore.getState().setAuth(authUser, res.data.accessToken, res.data.refreshToken);
+
+      if (activeTab === 'create' && selectedPlan && selectedPlan !== 'starter') {
+        try {
+          const checkoutRes = await api.post('/billing/checkout', { plan: selectedPlan });
+          if (checkoutRes.data?.checkoutUrl) {
+            window.location.href = checkoutRes.data.checkoutUrl;
+            return;
+          }
+        } catch (checkoutError) {
+          console.error('Checkout redirect failed:', checkoutError);
+        }
+      }
 
       const setupPath = await getSelfHostedSetupPath(res.data.onboardingCompleted);
       if (setupPath) {
