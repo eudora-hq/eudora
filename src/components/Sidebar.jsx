@@ -2,10 +2,9 @@ import { useAuthStore } from '../store/authStore';
 import { NavLink, useNavigate } from 'react-router-dom';
 import api from '../api/client';
 import { TierGate } from './TierGate';
-import { useSelfHosted } from '../hooks/useSelfHosted';
 
 export default function Sidebar() {
-  const isSelfHosted = useSelfHosted();
+  const isSelfHosted = import.meta.env.VITE_SELF_HOSTED === 'true';
   const { user, plan, trialDaysLeft, refreshToken, clearAuth } = useAuthStore();
   const navigate = useNavigate();
 
@@ -113,6 +112,27 @@ export default function Sidebar() {
           </button>
         </div>
       </div>
+
+      {isSelfHosted && (
+        <div className="border-t border-[#1a1a1a] p-4 mt-auto">
+          <div className="space-y-2">
+            <p className="font-mono text-[9px] text-text-muted uppercase tracking-widest leading-relaxed">
+              Self-Hosted
+            </p>
+            <p className="font-mono text-[9px] text-primary/70 uppercase tracking-widest">
+              All features unlocked
+            </p>
+            <a
+              href="https://geteudora.com"
+              target="_blank"
+              rel="noreferrer"
+              className="font-mono text-[9px] text-text-muted/50 hover:text-primary/60 uppercase tracking-widest transition-colors block"
+            >
+              Upgrade to cloud →
+            </a>
+          </div>
+        </div>
+      )}
     </aside>
   );
 }
