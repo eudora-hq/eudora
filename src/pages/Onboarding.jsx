@@ -15,7 +15,7 @@ const PLACEHOLDERS = [
 ];
 
 export default function Onboarding() {
-  const { user, accessToken, refreshToken, isAuthenticated, setAuth } = useAuthStore();
+  const { user, accessToken, refreshToken, isAuthenticated, setAuth, clearAuth } = useAuthStore();
   const addAgent = useAgentStore(state => state.addAgent);
   const {
     currentStep,
