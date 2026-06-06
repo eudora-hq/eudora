@@ -171,6 +171,10 @@ async function executeNode(node, input, tenantId, db, context = {}) {
     return executeWebhookOutNode(node, input, tenantId, db, context, startedAt)
   }
 
+  if (node.type === 'send_email') {
+    return executeSendEmailNode(node, input, tenantId, db, context, startedAt)
+  }
+
   const agent = db
     .prepare('SELECT * FROM agents WHERE id = ? AND tenant_id = ?')
     .get(node.agentId, tenantId)
@@ -582,6 +586,142 @@ async function executeWebhookOutNode(node, input, tenantId, db, context, started
   }
 }
 
+async function executeSendEmailNode(node, input, tenantId, db, context, startedAt) {
+  const config = node.config || {}
+  const to = config.to
+  const subject = config.subject || 'Eudora Workflow Alert'
+
+  if (!to) {
+    return {
+      nodeId: node.id,
+      agentId: null,
+      output: 'No recipient email configured',
+      tokensUsed: 0,
+      durationMs: Date.now() - startedAt,
+      status: 'failed',
+      error: 'missing_to',
+    }
+  }
+
+  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(to)) {
+    return {
+      nodeId: node.id,
+      agentId: null,
+      output: 'Invalid recipient email address',
+      tokensUsed: 0,
+      durationMs: Date.now() - startedAt,
+      status: 'failed',
+      error: 'invalid_email',
+    }
+  }
+
+  try {
+    const apiKey = process.env.RESEND_API_KEY
+    if (!apiKey || apiKey === 're_your_key_here') {
+      console.log(`[send_email node] RESEND_API_KEY not set - would send to ${to}: ${subject}`)
+      return {
+        nodeId: node.id,
+        agentId: null,
+        output: `Email logged (no RESEND_API_KEY): to=${to} subject="${subject}"`,
+        tokensUsed: 0,
+        durationMs: Date.now() - startedAt,
+        status: 'success',
+      }
+    }
+
+    const { Resend } = await import('resend')
+    const resend = new Resend(apiKey)
+    const defaultFrom = process.env.RESEND_FROM || 'security@geteudora.com'
+    const bodyText = input || config.body || 'Eudora workflow notification'
+    const htmlBody = config.htmlMode === 'true'
+      ? bodyText
+      : `
+<!DOCTYPE html>
+<html>
+<body style="margin:0;padding:0;background:#050505;font-family:monospace,sans-serif;">
+  <table width="100%" cellpadding="0" cellspacing="0" style="background:#050505;padding:40px 20px;">
+    <tr><td align="center">
+      <table width="560" cellpadding="0" cellspacing="0" style="background:#0a0a0a;border:1px solid #1a1a1a;max-width:560px;width:100%;">
+        <tr>
+          <td style="padding:24px 40px;border-bottom:1px solid #1a1a1a;">
+            <p style="margin:0;font-family:monospace;font-size:11px;color:#10b981;letter-spacing:0.15em;text-transform:uppercase;">EUDORA WORKFLOW ALERT</p>
+          </td>
+        </tr>
+        <tr>
+          <td style="padding:32px 40px;">
+            <h2 style="margin:0 0 16px;font-family:monospace;font-size:16px;color:#fff;text-transform:uppercase;">${escapeHtml(subject)}</h2>
+            <div style="font-family:monospace;font-size:12px;color:#aaa;line-height:1.8;white-space:pre-wrap;">${escapeHtml(bodyText)}</div>
+          </td>
+        </tr>
+        <tr>
+          <td style="padding:16px 40px;border-top:1px solid #1a1a1a;">
+            <p style="margin:0;font-family:monospace;font-size:9px;color:#333;">
+              Sent by Eudora Workflow Engine · <a href="https://app.geteudora.com" style="color:#555;">app.geteudora.com</a>
+            </p>
+          </td>
+        </tr>
+      </table>
+    </td></tr>
+  </table>
+</body>
+</html>`
+
+    const { data, error } = await resend.emails.send({
+      from: config.from
+        ? `${config.fromName || 'Eudora'} <${config.from}>`
+        : `Eudora Alerts <${defaultFrom}>`,
+      to: [to],
+      subject,
+      html: htmlBody,
+      text: bodyText,
+    })
+
+    if (error) {
+      return {
+        nodeId: node.id,
+        agentId: null,
+        output: `Email failed: ${error.message}`,
+        tokensUsed: 0,
+        durationMs: Date.now() - startedAt,
+        status: 'failed',
+        error: 'send_failed',
+      }
+    }
+
+    log({
+      tenantId,
+      userId: null,
+      action: 'email_sent',
+      riskScore: 0,
+      metadata: {
+        to,
+        subject,
+        messageId: data?.id,
+        workflowId: context.workflowId,
+      },
+    }, db)
+
+    return {
+      nodeId: node.id,
+      agentId: null,
+      output: `Email sent to ${to} - id: ${data?.id}`,
+      tokensUsed: 0,
+      durationMs: Date.now() - startedAt,
+      status: 'success',
+    }
+  } catch (err) {
+    return {
+      nodeId: node.id,
+      agentId: null,
+      output: err.message,
+      tokensUsed: 0,
+      durationMs: Date.now() - startedAt,
+      status: 'failed',
+      error: 'send_error',
+    }
+  }
+}
+
 function buildWebhookPayload(payloadMode, customPayload, input, context) {
   if (payloadMode === 'raw') {
     return typeof input === 'string' ? input : JSON.stringify(input)
@@ -623,4 +763,13 @@ function parseHeaders(headersString) {
     if (key && value) headers[key] = value
   })
   return headers
+}
+
+function escapeHtml(value) {
+  return String(value)
+    .replaceAll('&', '&amp;')
+    .replaceAll('<', '&lt;')
+    .replaceAll('>', '&gt;')
+    .replaceAll('"', '&quot;')
+    .replaceAll("'", '&#039;')
 }

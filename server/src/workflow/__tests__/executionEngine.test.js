@@ -7,6 +7,20 @@ import { nanoid } from 'nanoid'
 
 process.env.ENCRYPTION_KEY = 'f'.repeat(64)
 
+const resendMocks = vi.hoisted(() => ({
+  constructor: vi.fn(),
+  send: vi.fn(),
+}))
+
+vi.mock('resend', () => ({
+  Resend: function Resend(apiKey) {
+    resendMocks.constructor(apiKey)
+    this.emails = {
+      send: resendMocks.send,
+    }
+  },
+}))
+
 vi.mock('../../security/sanitiser.js', () => ({
   sanitise: vi.fn((input) => ({ sanitised: input, flagged: false, patterns: [] })),
 }))
@@ -721,5 +735,129 @@ describe('webhook_out node', () => {
       error: 'missing_url',
     })
     expect(fetchMock).not.toHaveBeenCalled()
+  })
+})
+
+describe('send_email node', () => {
+  function createEmailWorkflow(config, description = 'Compliance workflow result') {
+    createCustomWorkflow({
+      nodes: [
+        {
+          id: 'email1',
+          type: 'send_email',
+          label: 'Send Email',
+          config,
+          position: { x: 0, y: 0 },
+        },
+      ],
+      edges: [],
+      description,
+    })
+  }
+
+  beforeEach(() => {
+    process.env.RESEND_API_KEY = 're_test_key'
+    process.env.RESEND_FROM = 'security@geteudora.com'
+    resendMocks.send.mockResolvedValue({
+      data: { id: 'test-email-id' },
+      error: null,
+    })
+  })
+
+  afterEach(() => {
+    delete process.env.RESEND_API_KEY
+    delete process.env.RESEND_FROM
+  })
+
+  it('sends email with correct recipient and subject', async () => {
+    createEmailWorkflow({
+      to: 'test@example.com',
+      subject: 'Test Alert',
+      from: 'alerts@example.com',
+      fromName: 'Compliance Team',
+      htmlMode: 'false',
+    })
+
+    await executeWorkflow(workflowId, tenantId, db, runId)
+
+    expect(resendMocks.constructor).toHaveBeenCalledWith('re_test_key')
+    expect(resendMocks.send).toHaveBeenCalledWith(
+      expect.objectContaining({
+        from: 'Compliance Team <alerts@example.com>',
+        to: ['test@example.com'],
+        subject: 'Test Alert',
+        text: 'Compliance workflow result',
+        html: expect.stringContaining('EUDORA WORKFLOW ALERT'),
+      })
+    )
+    expect(latestResults()[0]).toMatchObject({
+      status: 'success',
+      output: expect.stringContaining('test@example.com'),
+    })
+    expect(log).toHaveBeenCalledWith(
+      expect.objectContaining({
+        action: 'email_sent',
+        metadata: expect.objectContaining({
+          to: 'test@example.com',
+          subject: 'Test Alert',
+          messageId: 'test-email-id',
+          workflowId,
+        }),
+      }),
+      db
+    )
+  })
+
+  it('missing recipient - returns failed without sending', async () => {
+    createEmailWorkflow({ subject: 'Test Alert' })
+
+    await executeWorkflow(workflowId, tenantId, db, runId)
+
+    expect(latestResults()[0]).toMatchObject({
+      status: 'failed',
+      error: 'missing_to',
+    })
+    expect(resendMocks.send).not.toHaveBeenCalled()
+  })
+
+  it('invalid email format - returns failed', async () => {
+    createEmailWorkflow({ to: 'not-an-email' })
+
+    await executeWorkflow(workflowId, tenantId, db, runId)
+
+    expect(latestResults()[0]).toMatchObject({
+      status: 'failed',
+      error: 'invalid_email',
+    })
+    expect(resendMocks.send).not.toHaveBeenCalled()
+  })
+
+  it('no RESEND_API_KEY - logs and returns success gracefully', async () => {
+    delete process.env.RESEND_API_KEY
+    createEmailWorkflow({ to: 'test@example.com' })
+
+    await executeWorkflow(workflowId, tenantId, db, runId)
+
+    expect(latestResults()[0]).toMatchObject({
+      status: 'success',
+      output: expect.stringContaining('RESEND_API_KEY'),
+    })
+    expect(resendMocks.send).not.toHaveBeenCalled()
+  })
+
+  it('Resend API error - returns failed with error message', async () => {
+    resendMocks.send.mockResolvedValueOnce({
+      data: null,
+      error: { message: 'Provider rejected the message' },
+    })
+    createEmailWorkflow({ to: 'test@example.com' })
+
+    await executeWorkflow(workflowId, tenantId, db, runId)
+
+    expect(latestResults()[0]).toMatchObject({
+      status: 'failed',
+      error: 'send_failed',
+      output: 'Email failed: Provider rejected the message',
+    })
   })
 })

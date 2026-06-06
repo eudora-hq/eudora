@@ -67,6 +67,27 @@ const NODE_DEFINITIONS = {
       headers: { type: 'textarea', label: 'Custom Headers (optional, one per line: Key: Value)', placeholder: 'Authorization: Bearer token\nX-Custom: value' },
     },
   },
+  send_email: {
+    label: 'Send Email',
+    icon: 'mail',
+    description: 'Send an email notification from a workflow run',
+    color: 'border-blue-500/40 bg-blue-500/5',
+    config: {
+      to: { type: 'text', label: 'Recipient Email', placeholder: 'compliance@yourcompany.com' },
+      subject: { type: 'text', label: 'Subject', placeholder: 'Eudora Compliance Alert' },
+      from: { type: 'text', label: 'From Address (optional - defaults to security@geteudora.com)', placeholder: 'alerts@yourcompany.com' },
+      fromName: { type: 'text', label: 'From Name (optional)', placeholder: 'Eudora Compliance' },
+      htmlMode: {
+        type: 'select',
+        label: 'Body Format',
+        options: [
+          { value: 'false', label: 'Plain text / markdown (auto-styled)' },
+          { value: 'true', label: 'Raw HTML' },
+        ],
+        default: 'false',
+      },
+    },
+  },
 };
 
 function AgentNode({ data, selected }) {
@@ -161,11 +182,35 @@ function WebhookOutNode({ data, selected }) {
   );
 }
 
+function SendEmailNode({ data, selected }) {
+  return (
+    <div className={`w-[240px] border bg-[#0a0a0a] p-4 transition-colors ${selected ? 'border-blue-400' : 'border-blue-500/40'}`}>
+      <Handle type="target" position={Position.Left} className="!w-3 !h-3 !bg-blue-400 !border-[#050505]" />
+      <div className="flex items-start justify-between gap-3 mb-3">
+        <div className="flex items-center gap-2 min-w-0">
+          <span className="material-symbols-outlined text-blue-400 text-[18px]">mail</span>
+          <h3 className="font-mono text-[12px] text-white uppercase font-bold tracking-widest leading-tight">{data.label || 'SEND EMAIL'}</h3>
+        </div>
+        <span className="border border-blue-500/40 bg-blue-500/10 px-2 py-1 font-mono text-[8px] text-blue-400 uppercase tracking-widest shrink-0">
+          EMAIL
+        </span>
+      </div>
+      <p
+        className="font-mono text-[10px] text-text-muted leading-relaxed overflow-hidden"
+        style={{ display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical' }}
+      >
+        {data.config?.to || 'Configure a recipient for workflow notifications.'}
+      </p>
+    </div>
+  );
+}
+
 const nodeTypes = {
   agent: AgentNode,
   fetch_url: FetchUrlNode,
   fetch_api: FetchApiNode,
   webhook_out: WebhookOutNode,
+  send_email: SendEmailNode,
 };
 
 export default function WorkflowCanvas() {
@@ -656,6 +701,17 @@ function WorkflowEditor({ workflowId }) {
                 </div>
                 <p className="font-mono text-[9px] text-text-muted leading-relaxed">POSTs workflow output to an external endpoint.</p>
               </div>
+              <div
+                draggable
+                onDragStart={(event) => onUtilityDragStart(event, 'send_email')}
+                className="border border-blue-500/40 bg-blue-500/5 p-3 cursor-grab active:cursor-grabbing hover:border-blue-400 transition-colors"
+              >
+                <div className="flex items-center gap-2 mb-2">
+                  <span className="material-symbols-outlined text-blue-400 text-[16px]">mail</span>
+                  <div className="font-mono text-[11px] text-white uppercase font-bold tracking-widest leading-tight">Send Email</div>
+                </div>
+                <p className="font-mono text-[9px] text-text-muted leading-relaxed">Sends workflow output through Resend.</p>
+              </div>
             </div>
           </aside>
 
@@ -782,6 +838,36 @@ function WorkflowEditor({ workflowId }) {
                       field={NODE_DEFINITIONS.webhook_out.config.headers}
                       value={selectedNode.data.config?.headers || ''}
                       onChange={(value) => updateNodeConfig('headers', value)}
+                    />
+                  </div>
+                )}
+
+                {selectedNode.type === 'send_email' && (
+                  <div className="space-y-4">
+                    <ConfigInput
+                      field={NODE_DEFINITIONS.send_email.config.to}
+                      value={selectedNode.data.config?.to || ''}
+                      onChange={(value) => updateNodeConfig('to', value)}
+                    />
+                    <ConfigInput
+                      field={NODE_DEFINITIONS.send_email.config.subject}
+                      value={selectedNode.data.config?.subject || ''}
+                      onChange={(value) => updateNodeConfig('subject', value)}
+                    />
+                    <ConfigInput
+                      field={NODE_DEFINITIONS.send_email.config.from}
+                      value={selectedNode.data.config?.from || ''}
+                      onChange={(value) => updateNodeConfig('from', value)}
+                    />
+                    <ConfigInput
+                      field={NODE_DEFINITIONS.send_email.config.fromName}
+                      value={selectedNode.data.config?.fromName || ''}
+                      onChange={(value) => updateNodeConfig('fromName', value)}
+                    />
+                    <ConfigInput
+                      field={NODE_DEFINITIONS.send_email.config.htmlMode}
+                      value={selectedNode.data.config?.htmlMode || 'false'}
+                      onChange={(value) => updateNodeConfig('htmlMode', value)}
                     />
                   </div>
                 )}
@@ -931,7 +1017,7 @@ function ConfigInput({ field, value, onChange }) {
 }
 
 function toFlowNode(node, agentById) {
-  if (node.type === 'fetch_url' || node.type === 'fetch_api' || node.type === 'webhook_out') {
+  if (node.type === 'fetch_url' || node.type === 'fetch_api' || node.type === 'webhook_out' || node.type === 'send_email') {
     const definition = NODE_DEFINITIONS[node.type];
     return {
       id: node.id,
@@ -958,7 +1044,7 @@ function toFlowNode(node, agentById) {
 }
 
 function fromFlowNode(node) {
-  if (node.type === 'fetch_url' || node.type === 'fetch_api' || node.type === 'webhook_out') {
+  if (node.type === 'fetch_url' || node.type === 'fetch_api' || node.type === 'webhook_out' || node.type === 'send_email') {
     const definition = NODE_DEFINITIONS[node.type];
     return {
       id: node.id,
@@ -1030,7 +1116,7 @@ function buildWorkflowTemplatePayload(template, agents) {
     name: template.name.toUpperCase(),
     description: template.description,
     nodes: template.nodes.map((node) => {
-      if (node.type === 'fetch_url' || node.type === 'fetch_api' || node.type === 'webhook_out') {
+      if (node.type === 'fetch_url' || node.type === 'fetch_api' || node.type === 'webhook_out' || node.type === 'send_email') {
         return {
           id: node.id,
           type: node.type,

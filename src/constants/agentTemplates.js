@@ -870,6 +870,64 @@ Return ONLY the JSON, no other text.`,
     ],
     edges: [{ source: 'n1', target: 'n2' }],
   },
+  {
+    id: 'email-compliance-report',
+    name: 'Email Weekly Compliance Report',
+    category: 'compliance',
+    description: 'Generates a weekly AI compliance summary and emails it to the compliance officer.',
+    badge: 'REPORT',
+    nodes: [
+      {
+        id: 'n1',
+        type: 'agent',
+        label: 'Report Generator',
+        systemPrompt: `You are a compliance reporting assistant. Generate a concise weekly AI compliance summary suitable for email. Cover:
+- Summary of AI agent activity this week
+- Any flagged or high-risk interactions
+- Overall compliance posture (COMPLIANT / ATTENTION NEEDED / CRITICAL)
+- Top 3 recommendations for next week
+
+Format clearly with section headers. Be professional and concise.`,
+      },
+      {
+        id: 'n2',
+        type: 'send_email',
+        label: 'Email Compliance Officer',
+        config: {
+          to: '',
+          subject: 'Weekly AI Compliance Report - Eudora',
+          htmlMode: 'false',
+        },
+      },
+    ],
+    edges: [{ source: 'n1', target: 'n2' }],
+  },
+  {
+    id: 'email-risk-alert',
+    name: 'Email Alert on High Risk Detection',
+    category: 'compliance',
+    description: 'Immediately emails the security team when a high-risk AI event is detected.',
+    badge: 'ALERT',
+    nodes: [
+      {
+        id: 'n1',
+        type: 'agent',
+        label: 'Alert Summariser',
+        systemPrompt: 'You are a security incident reporter. Given a high-risk AI compliance event, write a brief (3-5 sentence) security alert email body. Include: what happened, risk level, affected agent, and recommended immediate action. Be direct and factual.',
+      },
+      {
+        id: 'n2',
+        type: 'send_email',
+        label: 'Alert Security Team',
+        config: {
+          to: '',
+          subject: 'High-Risk AI Event Detected - Eudora',
+          htmlMode: 'false',
+        },
+      },
+    ],
+    edges: [{ source: 'n1', target: 'n2' }],
+  },
 ]
 
 export const TEMPLATE_CATEGORIES = [
