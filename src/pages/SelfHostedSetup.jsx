@@ -71,6 +71,7 @@ export default function SelfHostedSetup() {
         model_name: selectedModel,
       });
       localStorage.setItem('eudora-setup-complete', 'true');
+      localStorage.setItem('eudora-wizard-model', selectedModel || '');
       navigate('/onboarding');
     } catch (err) {
       setError(err.response?.data?.message || err.response?.data?.error || 'Failed to create Ollama connection');

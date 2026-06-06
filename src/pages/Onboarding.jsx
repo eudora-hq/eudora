@@ -39,6 +39,20 @@ export default function Onboarding() {
     if (user?.onboardingCompleted) navigate('/agents', { replace: true });
   }, [isAuthenticated, navigate, user?.onboardingCompleted]);
 
+  // If user came from self-hosted wizard, they already have an API key — skip step 1
+  useEffect(() => {
+    const wizardModel = localStorage.getItem('eudora-wizard-model');
+    if (wizardModel && currentStep === 1) {
+      api.get('/api-keys').then(res => {
+        if (res.data && res.data.length > 0) {
+          const key = res.data[0];
+          setApiKey(key.id, key.provider);
+          setStep(2);
+        }
+      }).catch(() => {});
+    }
+  }, []);
+
   useEffect(() => {
     if (currentStep === 6 && !showWorkflowStep) completeOnboarding();
   }, [currentStep, showWorkflowStep]);
@@ -154,7 +168,7 @@ function StepOne({ setStep, setApiKey }) {
   const [status, setStatus] = useState(null);
   const [error, setError] = useState('');
   const [latencyMs, setLatencyMs] = useState(null);
-  const [modelName, setModelName] = useState('qwen2.5-coder:14b');
+  const [modelName, setModelName] = useState(localStorage.getItem('eudora-wizard-model') || '');
   const needsBaseUrl = provider === 'ollama' || provider === 'custom';
   const optionalKey = needsBaseUrl;
 
