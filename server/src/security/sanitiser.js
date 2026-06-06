@@ -31,28 +31,116 @@ const PATTERNS = [
   { pattern: /disable\s+(safety|security|restrictions?|filters?|guidelines?)/i, label: 'safety_bypass' },
 ]
 
+const DLP_PATTERNS = [
+  // AWS credentials
+  /AKIA[0-9A-Z]{16}/i,
+  /aws[_\s-]?secret[_\s-]?key\s*[:=]\s*[A-Za-z0-9/+]{40}/i,
+
+  // Private keys
+  /-----BEGIN\s+(RSA\s+)?PRIVATE\s+KEY-----/i,
+  /-----BEGIN\s+EC\s+PRIVATE\s+KEY-----/i,
+  /-----BEGIN\s+OPENSSH\s+PRIVATE\s+KEY-----/i,
+  /-----BEGIN\s+PGP\s+PRIVATE\s+KEY\s+BLOCK-----/i,
+
+  // GitHub tokens
+  /ghp_[A-Za-z0-9]{36}/,
+  /ghs_[A-Za-z0-9]{36}/,
+  /gho_[A-Za-z0-9]{36}/,
+  /github_pat_[A-Za-z0-9_]{82}/,
+
+  // Generic API keys and tokens
+  /(?:api[_-]?key|secret[_-]?key|access[_-]?token|auth[_-]?token)\s*[:=]\s*['"]?[A-Za-z0-9_-]{32,}['"]?/i,
+
+  // Database credentials
+  /(?:mongodb|postgresql|mysql|redis|mssql):\/\/[^:]+:[^@]+@/i,
+  /(?:password|passwd|pwd)\s*[:=]\s*['"]?[^\s'"]{8,}['"]?/i,
+
+  // JWT tokens
+  /eyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}/,
+
+  // Stripe keys
+  /sk_live_[A-Za-z0-9]{24,}/,
+  /sk_test_[A-Za-z0-9]{24,}/,
+
+  // Slack tokens
+  /xox[baprs]-[A-Za-z0-9-]{10,}/,
+
+  // Generic high-entropy hexadecimal secrets
+  /\b[0-9a-f]{32,64}\b/i,
+]
+
+function globalPattern(pattern) {
+  return new RegExp(pattern.source, pattern.flags.includes('g') ? pattern.flags : `${pattern.flags}g`)
+}
+
+function checkInjectionPatterns(input) {
+  let sanitisedText = input
+  const matched = new Set()
+
+  for (const { pattern, label } of PATTERNS) {
+    if (pattern.test(input)) {
+      matched.add(label)
+      sanitisedText = sanitisedText.replace(globalPattern(pattern), '[REDACTED]')
+    }
+  }
+
+  return {
+    flagged: matched.size > 0,
+    patterns: [...matched],
+    sanitisedText,
+  }
+}
+
+function checkDlpPatterns(input) {
+  let sanitisedText = input
+  let flagged = false
+
+  for (const pattern of DLP_PATTERNS) {
+    if (pattern.test(input)) {
+      flagged = true
+      sanitisedText = sanitisedText.replace(globalPattern(pattern), '[CREDENTIAL REDACTED]')
+    }
+  }
+
+  return {
+    flagged,
+    patterns: flagged ? ['credential_exposure'] : [],
+    sanitisedText,
+  }
+}
+
 export function sanitise(input) {
   try {
     if (typeof input !== 'string') {
-      return { sanitised: input, flagged: false, patterns: [] }
-    }
-
-    let sanitised = input
-    const matched = new Set()
-
-    for (const { pattern, label } of PATTERNS) {
-      if (pattern.test(sanitised)) {
-        matched.add(label)
-        sanitised = sanitised.replace(new RegExp(pattern.source, 'gi'), '[REDACTED]')
+      const sanitisedText = input ?? ''
+      return {
+        sanitised: sanitisedText,
+        sanitisedText,
+        flagged: false,
+        patterns: [],
+        dlpDetected: false,
       }
     }
 
+    const injectionResult = checkInjectionPatterns(input)
+    const dlpResult = checkDlpPatterns(injectionResult.sanitisedText)
+    const sanitisedText = dlpResult.sanitisedText
+
     return {
-      sanitised,
-      flagged: matched.size > 0,
-      patterns: [...matched],
+      sanitised: sanitisedText,
+      sanitisedText,
+      flagged: injectionResult.flagged || dlpResult.flagged,
+      patterns: [...new Set([...injectionResult.patterns, ...dlpResult.patterns])],
+      dlpDetected: dlpResult.flagged,
     }
   } catch {
-    return { sanitised: input, flagged: false, patterns: [] }
+    const sanitisedText = input ?? ''
+    return {
+      sanitised: sanitisedText,
+      sanitisedText,
+      flagged: false,
+      patterns: [],
+      dlpDetected: false,
+    }
   }
 }
