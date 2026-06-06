@@ -162,6 +162,10 @@ async function executeNode(node, input, tenantId, db, context = {}) {
     return executeFetchUrlNode(node, input, tenantId, db, context, startedAt)
   }
 
+  if (node.type === 'fetch_api') {
+    return executeFetchApiNode(node, input, tenantId, db, context, startedAt)
+  }
+
   const agent = db
     .prepare('SELECT * FROM agents WHERE id = ? AND tenant_id = ?')
     .get(node.agentId, tenantId)
@@ -349,4 +353,141 @@ function resolveFetchUrl(node, input) {
 
   const urls = raw.match(/https?:\/\/[^\s"',\]]+/g) || []
   return urls[preferredIndex] || urls[0] || raw
+}
+
+async function executeFetchApiNode(node, input, tenantId, db, context, startedAt) {
+  const config = node.config || {}
+  const url = config.url || input
+
+  if (!url || (!String(url).startsWith('http://') && !String(url).startsWith('https://'))) {
+    return {
+      nodeId: node.id,
+      agentId: null,
+      output: 'Invalid URL',
+      tokensUsed: 0,
+      durationMs: Date.now() - startedAt,
+      status: 'failed',
+      error: 'invalid_url',
+    }
+  }
+
+  let timeout
+  try {
+    const controller = new AbortController()
+    timeout = setTimeout(() => controller.abort(), 15000)
+
+    const headers = {
+      'Content-Type': 'application/json',
+      'User-Agent': 'Eudora-Workflow/1.0',
+      ...parseHeaders(config.headers || ''),
+    }
+
+    if (config.authType === 'bearer' && config.authValue) {
+      headers.Authorization = `Bearer ${config.authValue}`
+    } else if (config.authType === 'basic' && config.authValue) {
+      headers.Authorization = `Basic ${Buffer.from(config.authValue).toString('base64')}`
+    } else if (config.authType === 'apikey' && config.authValue && config.authHeader) {
+      headers[config.authHeader] = config.authValue
+    }
+
+    const method = String(config.method || 'GET').toUpperCase()
+    const options = {
+      method,
+      headers,
+      signal: controller.signal,
+    }
+
+    if (method !== 'GET' && method !== 'HEAD') {
+      const configuredBody = config.body
+      const body = configuredBody || (method === 'POST' ? input : '')
+      if (body) {
+        if (typeof body === 'string') {
+          try {
+            JSON.parse(body)
+            options.body = body
+          } catch {
+            options.body = JSON.stringify({ data: body })
+          }
+        } else {
+          options.body = JSON.stringify(body)
+        }
+      }
+    }
+
+    const response = await fetch(String(url), options)
+    const responseText = await response.text()
+
+    let output
+    try {
+      output = JSON.stringify(JSON.parse(responseText), null, 2)
+    } catch {
+      output = responseText
+    }
+
+    const maxChars = 50000
+    if (output.length > maxChars) {
+      output = `${output.substring(0, maxChars)}\n\n[Response truncated at 50,000 characters]`
+    }
+
+    log({
+      tenantId,
+      userId: null,
+      action: 'api_called',
+      riskScore: 0,
+      metadata: {
+        url: String(url),
+        method,
+        statusCode: response.status,
+        workflowId: context.workflowId,
+      },
+    }, db)
+
+    if (!response.ok) {
+      return {
+        nodeId: node.id,
+        agentId: null,
+        output: `HTTP ${response.status}: ${output}`,
+        tokensUsed: 0,
+        durationMs: Date.now() - startedAt,
+        status: 'failed',
+        error: 'http_error',
+      }
+    }
+
+    return {
+      nodeId: node.id,
+      agentId: null,
+      output,
+      tokensUsed: 0,
+      durationMs: Date.now() - startedAt,
+      status: 'success',
+    }
+  } catch (err) {
+    return {
+      nodeId: node.id,
+      agentId: null,
+      output: err.name === 'AbortError' ? 'Request timed out' : err.message,
+      tokensUsed: 0,
+      durationMs: Date.now() - startedAt,
+      status: 'failed',
+      error: err.name === 'AbortError' ? 'timeout' : 'fetch_error',
+    }
+  } finally {
+    if (timeout) clearTimeout(timeout)
+  }
+}
+
+function parseHeaders(headersString) {
+  if (!headersString) return {}
+
+  const headers = {}
+  String(headersString).split('\n').forEach(line => {
+    const index = line.indexOf(':')
+    if (index <= 0) return
+
+    const key = line.substring(0, index).trim()
+    const value = line.substring(index + 1).trim()
+    if (key && value) headers[key] = value
+  })
+  return headers
 }

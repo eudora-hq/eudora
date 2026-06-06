@@ -30,6 +30,21 @@ const NODE_DEFINITIONS = {
       url: { type: 'text', placeholder: 'https://example.com/document', label: 'URL (optional - uses input if empty)' },
     },
   },
+  fetch_api: {
+    label: 'API Call',
+    icon: 'api',
+    description: 'Call any REST API with custom headers and authentication',
+    color: 'border-purple-500/40 bg-purple-500/5',
+    config: {
+      url: { type: 'text', label: 'API URL', placeholder: 'https://api.example.com/endpoint' },
+      method: { type: 'select', label: 'HTTP Method', options: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE'], default: 'GET' },
+      authType: { type: 'select', label: 'Authentication', options: ['none', 'bearer', 'basic', 'apikey'], default: 'none' },
+      authValue: { type: 'password', label: 'Auth Token / Credentials', placeholder: 'Token or username:password' },
+      authHeader: { type: 'text', label: 'API Key Header Name', placeholder: 'X-API-Key' },
+      headers: { type: 'textarea', label: 'Custom Headers (one per line: Key: Value)', placeholder: 'Content-Type: application/json\nX-Custom-Header: value' },
+      body: { type: 'textarea', label: 'Request Body (JSON)', placeholder: '{"key": "value"}' },
+    },
+  },
 };
 
 function AgentNode({ data, selected }) {
@@ -77,7 +92,31 @@ function FetchUrlNode({ data, selected }) {
   );
 }
 
-const nodeTypes = { agent: AgentNode, fetch_url: FetchUrlNode };
+function FetchApiNode({ data, selected }) {
+  return (
+    <div className={`w-[240px] border bg-[#0a0a0a] p-4 transition-colors ${selected ? 'border-purple-400' : 'border-purple-500/40'}`}>
+      <Handle type="target" position={Position.Left} className="!w-3 !h-3 !bg-purple-400 !border-[#050505]" />
+      <div className="flex items-start justify-between gap-3 mb-3">
+        <div className="flex items-center gap-2 min-w-0">
+          <span className="material-symbols-outlined text-purple-400 text-[18px]">api</span>
+          <h3 className="font-mono text-[12px] text-white uppercase font-bold tracking-widest leading-tight">{data.label || 'API CALL'}</h3>
+        </div>
+        <span className="border border-purple-500/40 bg-purple-500/10 px-2 py-1 font-mono text-[8px] text-purple-400 uppercase tracking-widest shrink-0">
+          {data.config?.method || 'GET'}
+        </span>
+      </div>
+      <p
+        className="font-mono text-[10px] text-text-muted leading-relaxed overflow-hidden"
+        style={{ display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical' }}
+      >
+        {data.config?.url || 'Uses incoming text as the API URL when no URL is configured.'}
+      </p>
+      <Handle type="source" position={Position.Right} className="!w-3 !h-3 !bg-purple-400 !border-[#050505]" />
+    </div>
+  );
+}
+
+const nodeTypes = { agent: AgentNode, fetch_url: FetchUrlNode, fetch_api: FetchApiNode };
 
 export default function WorkflowCanvas() {
   const { id } = useParams();
@@ -369,13 +408,16 @@ function WorkflowEditor({ workflowId }) {
     if (utilityType && NODE_DEFINITIONS[utilityType]) {
       const definition = NODE_DEFINITIONS[utilityType];
       const id = `node-${utilityType}-${Date.now()}`;
+      const config = Object.fromEntries(
+        Object.entries(definition.config || {}).map(([key, field]) => [key, field.default || ''])
+      );
       setNodes((nds) => nds.concat({
         id,
         type: utilityType,
         position,
         data: {
           label: definition.label,
-          config: { url: '' },
+          config,
         },
       }));
     }
@@ -542,6 +584,17 @@ function WorkflowEditor({ workflowId }) {
                 </div>
                 <p className="font-mono text-[9px] text-text-muted leading-relaxed">Fetches text content from a URL.</p>
               </div>
+              <div
+                draggable
+                onDragStart={(event) => onUtilityDragStart(event, 'fetch_api')}
+                className="border border-purple-500/40 bg-purple-500/5 p-3 cursor-grab active:cursor-grabbing hover:border-purple-400 transition-colors"
+              >
+                <div className="flex items-center gap-2 mb-2">
+                  <span className="material-symbols-outlined text-purple-400 text-[16px]">api</span>
+                  <div className="font-mono text-[11px] text-white uppercase font-bold tracking-widest leading-tight">API Call</div>
+                </div>
+                <p className="font-mono text-[9px] text-text-muted leading-relaxed">Calls a REST API with headers and authentication.</p>
+              </div>
             </div>
           </aside>
 
@@ -591,6 +644,52 @@ function WorkflowEditor({ workflowId }) {
                       className="w-full bg-[#050505] border border-[#262626] text-white font-mono text-[11px] px-3 py-2 focus:outline-none focus:border-primary placeholder:text-[#404040]"
                     />
                     <p className="font-mono text-[9px] text-text-muted/70 leading-relaxed">Leave empty to use the previous node output as the URL.</p>
+                  </div>
+                )}
+
+                {selectedNode.type === 'fetch_api' && (
+                  <div className="space-y-4">
+                    <ConfigInput
+                      field={NODE_DEFINITIONS.fetch_api.config.url}
+                      value={selectedNode.data.config?.url || ''}
+                      onChange={(value) => updateNodeConfig('url', value)}
+                    />
+                    <ConfigInput
+                      field={NODE_DEFINITIONS.fetch_api.config.method}
+                      value={selectedNode.data.config?.method || 'GET'}
+                      onChange={(value) => updateNodeConfig('method', value)}
+                    />
+                    <ConfigInput
+                      field={NODE_DEFINITIONS.fetch_api.config.authType}
+                      value={selectedNode.data.config?.authType || 'none'}
+                      onChange={(value) => updateNodeConfig('authType', value)}
+                    />
+                    {(selectedNode.data.config?.authType || 'none') !== 'none' && (
+                      <ConfigInput
+                        field={NODE_DEFINITIONS.fetch_api.config.authValue}
+                        value={selectedNode.data.config?.authValue || ''}
+                        onChange={(value) => updateNodeConfig('authValue', value)}
+                      />
+                    )}
+                    {selectedNode.data.config?.authType === 'apikey' && (
+                      <ConfigInput
+                        field={NODE_DEFINITIONS.fetch_api.config.authHeader}
+                        value={selectedNode.data.config?.authHeader || ''}
+                        onChange={(value) => updateNodeConfig('authHeader', value)}
+                      />
+                    )}
+                    <ConfigInput
+                      field={NODE_DEFINITIONS.fetch_api.config.headers}
+                      value={selectedNode.data.config?.headers || ''}
+                      onChange={(value) => updateNodeConfig('headers', value)}
+                    />
+                    {(selectedNode.data.config?.method || 'GET') !== 'GET' && (
+                      <ConfigInput
+                        field={NODE_DEFINITIONS.fetch_api.config.body}
+                        value={selectedNode.data.config?.body || ''}
+                        onChange={(value) => updateNodeConfig('body', value)}
+                      />
+                    )}
                   </div>
                 )}
 
@@ -703,14 +802,46 @@ function CanvasTooltip({ onDismiss }) {
   );
 }
 
+function ConfigInput({ field, value, onChange }) {
+  const baseClass = 'w-full bg-[#050505] border border-[#262626] text-white font-mono text-[11px] px-3 py-2 focus:outline-none focus:border-primary placeholder:text-[#404040]';
+
+  return (
+    <div className="space-y-2">
+      <label className="font-mono text-[9px] text-text-muted uppercase tracking-widest block">{field.label}</label>
+      {field.type === 'select' ? (
+        <select value={value} onChange={(event) => onChange(event.target.value)} className={baseClass}>
+          {field.options.map(option => <option key={option} value={option}>{option.toUpperCase()}</option>)}
+        </select>
+      ) : field.type === 'textarea' ? (
+        <textarea
+          value={value}
+          onChange={(event) => onChange(event.target.value)}
+          placeholder={field.placeholder}
+          className={`${baseClass} min-h-[88px] resize-y`}
+        />
+      ) : (
+        <input
+          type={field.type === 'password' ? 'password' : 'text'}
+          value={value}
+          onChange={(event) => onChange(event.target.value)}
+          placeholder={field.placeholder}
+          autoComplete={field.type === 'password' ? 'new-password' : undefined}
+          className={baseClass}
+        />
+      )}
+    </div>
+  );
+}
+
 function toFlowNode(node, agentById) {
-  if (node.type === 'fetch_url') {
+  if (node.type === 'fetch_url' || node.type === 'fetch_api') {
+    const definition = NODE_DEFINITIONS[node.type];
     return {
       id: node.id,
-      type: 'fetch_url',
+      type: node.type,
       position: node.position || { x: 0, y: 0 },
       data: {
-        label: node.label || NODE_DEFINITIONS.fetch_url.label,
+        label: node.label || definition.label,
         config: node.config || {},
       },
     };
@@ -730,11 +861,12 @@ function toFlowNode(node, agentById) {
 }
 
 function fromFlowNode(node) {
-  if (node.type === 'fetch_url') {
+  if (node.type === 'fetch_url' || node.type === 'fetch_api') {
+    const definition = NODE_DEFINITIONS[node.type];
     return {
       id: node.id,
-      type: 'fetch_url',
-      label: node.data.label || NODE_DEFINITIONS.fetch_url.label,
+      type: node.type,
+      label: node.data.label || definition.label,
       config: node.data.config || {},
       position: node.position,
     };
@@ -801,10 +933,10 @@ function buildWorkflowTemplatePayload(template, agents) {
     name: template.name.toUpperCase(),
     description: template.description,
     nodes: template.nodes.map((node) => {
-      if (node.type === 'fetch_url') {
+      if (node.type === 'fetch_url' || node.type === 'fetch_api') {
         return {
           id: node.id,
-          type: 'fetch_url',
+          type: node.type,
           label: node.label,
           config: node.config || {},
           position: positionById[node.id],

@@ -314,3 +314,219 @@ describe('executeWorkflow', () => {
     expect(fetchMock).not.toHaveBeenCalled()
   })
 })
+
+describe('fetch_api node', () => {
+  function createApiWorkflow(config) {
+    createCustomWorkflow({
+      nodes: [
+        {
+          id: 'api1',
+          type: 'fetch_api',
+          label: 'API Call',
+          config,
+          position: { x: 0, y: 0 },
+        },
+      ],
+      edges: [],
+    })
+  }
+
+  it('GET request - success returns parsed JSON output', async () => {
+    const fetchMock = vi.fn().mockResolvedValueOnce({
+      ok: true,
+      status: 200,
+      text: async () => JSON.stringify({ id: 1, name: 'test' }),
+    })
+    vi.stubGlobal('fetch', fetchMock)
+    createApiWorkflow({ url: 'https://api.example.com/items/1', method: 'GET' })
+
+    await executeWorkflow(workflowId, tenantId, db, runId)
+
+    const result = latestResults()[0]
+    expect(result).toMatchObject({
+      status: 'success',
+      output: '{\n  "id": 1,\n  "name": "test"\n}',
+    })
+    expect(log).toHaveBeenCalledWith(
+      expect.objectContaining({
+        action: 'api_called',
+        metadata: expect.objectContaining({
+          url: 'https://api.example.com/items/1',
+          method: 'GET',
+          statusCode: 200,
+          workflowId,
+        }),
+      }),
+      db
+    )
+  })
+
+  it('POST request with body - body sent correctly', async () => {
+    const fetchMock = vi.fn().mockResolvedValueOnce({
+      ok: true,
+      status: 201,
+      text: async () => JSON.stringify({ created: true }),
+    })
+    vi.stubGlobal('fetch', fetchMock)
+    createApiWorkflow({
+      url: 'https://api.example.com/items',
+      method: 'POST',
+      body: '{"key":"value"}',
+    })
+
+    await executeWorkflow(workflowId, tenantId, db, runId)
+
+    expect(fetchMock).toHaveBeenCalledWith(
+      'https://api.example.com/items',
+      expect.objectContaining({
+        method: 'POST',
+        body: '{"key":"value"}',
+      })
+    )
+  })
+
+  it('Bearer auth - Authorization header set correctly', async () => {
+    const fetchMock = vi.fn().mockResolvedValueOnce({
+      ok: true,
+      status: 200,
+      text: async () => '{}',
+    })
+    vi.stubGlobal('fetch', fetchMock)
+    createApiWorkflow({
+      url: 'https://api.example.com/private',
+      method: 'GET',
+      authType: 'bearer',
+      authValue: 'mytoken',
+    })
+
+    await executeWorkflow(workflowId, tenantId, db, runId)
+
+    expect(fetchMock).toHaveBeenCalledWith(
+      'https://api.example.com/private',
+      expect.objectContaining({
+        headers: expect.objectContaining({
+          Authorization: 'Bearer mytoken',
+        }),
+      })
+    )
+  })
+
+  it('Basic auth - credentials are base64 encoded', async () => {
+    const fetchMock = vi.fn().mockResolvedValueOnce({
+      ok: true,
+      status: 200,
+      text: async () => '{}',
+    })
+    vi.stubGlobal('fetch', fetchMock)
+    createApiWorkflow({
+      url: 'https://api.example.com/private',
+      method: 'GET',
+      authType: 'basic',
+      authValue: 'user:password',
+    })
+
+    await executeWorkflow(workflowId, tenantId, db, runId)
+
+    expect(fetchMock).toHaveBeenCalledWith(
+      'https://api.example.com/private',
+      expect.objectContaining({
+        headers: expect.objectContaining({
+          Authorization: `Basic ${Buffer.from('user:password').toString('base64')}`,
+        }),
+      })
+    )
+  })
+
+  it('API key auth - custom header set correctly', async () => {
+    const fetchMock = vi.fn().mockResolvedValueOnce({
+      ok: true,
+      status: 200,
+      text: async () => '{}',
+    })
+    vi.stubGlobal('fetch', fetchMock)
+    createApiWorkflow({
+      url: 'https://api.example.com/private',
+      method: 'GET',
+      authType: 'apikey',
+      authHeader: 'X-API-Key',
+      authValue: 'secret',
+      headers: 'Accept: application/json\nX-Workflow: eudora',
+    })
+
+    await executeWorkflow(workflowId, tenantId, db, runId)
+
+    expect(fetchMock).toHaveBeenCalledWith(
+      'https://api.example.com/private',
+      expect.objectContaining({
+        headers: expect.objectContaining({
+          Accept: 'application/json',
+          'X-Workflow': 'eudora',
+          'X-API-Key': 'secret',
+        }),
+      })
+    )
+  })
+
+  it('HTTP 4xx error - returns failed status with error body', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValueOnce({
+      ok: false,
+      status: 404,
+      text: async () => JSON.stringify({ error: 'not found' }),
+    }))
+    createApiWorkflow({ url: 'https://api.example.com/missing', method: 'GET' })
+
+    await executeWorkflow(workflowId, tenantId, db, runId)
+
+    expect(latestResults()[0]).toMatchObject({
+      status: 'failed',
+      error: 'http_error',
+      output: expect.stringContaining('HTTP 404'),
+    })
+    expect(latestResults()[0].output).toContain('"error": "not found"')
+  })
+
+  it('Timeout - returns failed status with timeout error', async () => {
+    const timeoutError = new Error('abort')
+    timeoutError.name = 'AbortError'
+    vi.stubGlobal('fetch', vi.fn().mockRejectedValueOnce(timeoutError))
+    createApiWorkflow({ url: 'https://api.example.com/slow', method: 'GET' })
+
+    await executeWorkflow(workflowId, tenantId, db, runId)
+
+    expect(latestResults()[0]).toMatchObject({
+      status: 'failed',
+      error: 'timeout',
+      output: 'Request timed out',
+    })
+  })
+
+  it('Invalid URL - returns failed without calling fetch', async () => {
+    const fetchMock = vi.fn()
+    vi.stubGlobal('fetch', fetchMock)
+    createApiWorkflow({ url: 'not-a-url', method: 'GET' })
+
+    await executeWorkflow(workflowId, tenantId, db, runId)
+
+    expect(latestResults()[0]).toMatchObject({
+      status: 'failed',
+      error: 'invalid_url',
+    })
+    expect(fetchMock).not.toHaveBeenCalled()
+  })
+
+  it('Large response - truncated at 50,000 characters', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValueOnce({
+      ok: true,
+      status: 200,
+      text: async () => 'x'.repeat(60000),
+    }))
+    createApiWorkflow({ url: 'https://api.example.com/large', method: 'GET' })
+
+    await executeWorkflow(workflowId, tenantId, db, runId)
+
+    const result = latestResults()[0]
+    expect(result.status).toBe('success')
+    expect(result.output.length).toBeLessThanOrEqual(50100)
+    expect(result.output).toContain('[Response truncated at 50,000 characters]')
+  })
+})

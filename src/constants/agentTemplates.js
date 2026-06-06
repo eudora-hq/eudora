@@ -710,6 +710,73 @@ RECOMMENDED NEXT STEPS`,
       { source: 'n3', target: 'n4' },
     ],
   },
+  {
+    id: 'github-pr-reviewer',
+    name: 'GitHub PR Review Monitor',
+    category: 'engineering',
+    description: 'Monitors open PRs, fetches diffs, and produces a compliance review for code containing sensitive data.',
+    badge: 'SECURITY',
+    nodes: [
+      {
+        id: 'n1',
+        type: 'fetch_api',
+        label: 'Fetch Open PRs',
+        config: {
+          url: 'https://api.github.com/repos/{owner}/{repo}/pulls',
+          method: 'GET',
+          authType: 'bearer',
+          headers: 'Accept: application/vnd.github.v3+json',
+        },
+      },
+      {
+        id: 'n2',
+        type: 'agent',
+        label: 'Security Reviewer',
+        systemPrompt: `You are a security-focused code reviewer. Given a list of open pull requests, identify any that:
+1. May contain hardcoded credentials, API keys, or secrets
+2. Modify authentication or authorisation logic
+3. Change data access patterns
+4. Touch encryption or key management code
+
+For each flagged PR, explain the risk and recommended action. Format as a structured security review report.`,
+      },
+    ],
+    edges: [{ source: 'n1', target: 'n2' }],
+  },
+  {
+    id: 'slack-compliance-alert',
+    name: 'Slack Compliance Alerter',
+    category: 'compliance',
+    description: 'Posts compliance alerts to a Slack channel when triggered by a workflow.',
+    badge: 'INTEGRATION',
+    nodes: [
+      {
+        id: 'n1',
+        type: 'agent',
+        label: 'Alert Formatter',
+        systemPrompt: `Format the input as a Slack message JSON payload. Use this structure:
+{
+  "text": "⚠️ Eudora Compliance Alert",
+  "blocks": [
+    {"type": "header", "text": {"type": "plain_text", "text": "Compliance Alert"}},
+    {"type": "section", "text": {"type": "mrkdwn", "text": "*Summary:* {summary}"}}
+  ]
+}
+Return ONLY the JSON, no other text.`,
+      },
+      {
+        id: 'n2',
+        type: 'fetch_api',
+        label: 'Post to Slack',
+        config: {
+          url: 'https://hooks.slack.com/services/{your-webhook-url}',
+          method: 'POST',
+          authType: 'none',
+        },
+      },
+    ],
+    edges: [{ source: 'n1', target: 'n2' }],
+  },
 ]
 
 export const TEMPLATE_CATEGORIES = [
