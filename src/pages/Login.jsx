@@ -35,8 +35,9 @@ export default function Login() {
 
       useAuthStore.getState().setAuth(authUser, res.data.accessToken, res.data.refreshToken);
 
-      if (activeTab === 'create') {
-        navigate('/onboarding');
+      const setupPath = await getSelfHostedSetupPath(res.data.onboardingCompleted);
+      if (setupPath) {
+        navigate(setupPath);
         return;
       }
 
@@ -56,6 +57,21 @@ export default function Login() {
     } finally {
       setIsLoading(false);
     }
+  };
+
+  const getSelfHostedSetupPath = async (onboardingCompleted) => {
+    const isSelfHosted = import.meta.env.VITE_SELF_HOSTED === 'true';
+    const setupComplete = localStorage.getItem('eudora-setup-complete') === 'true';
+    if (!isSelfHosted || setupComplete) return null;
+
+    try {
+      const res = await api.get('/api-keys');
+      if ((res.data || []).length === 0) return '/setup';
+    } catch {
+      // If setup detection fails, keep the normal login path.
+    }
+
+    return onboardingCompleted ? '/agents' : '/onboarding';
   };
 
   const getPasswordStrength = () => {

@@ -66,6 +66,7 @@ async function start() {
   // Public routes: no token required
   const PUBLIC_ROUTES = new Set([
     'GET /health',
+    'GET /health/ollama',
     'POST /auth/register',
     'POST /auth/login',
     'POST /auth/refresh',
@@ -108,6 +109,43 @@ async function start() {
   fastify.register(reportsRoutes, { prefix: '/reports' })
 
   fastify.get('/health', async () => ({ status: 'ok', ts: Date.now() }))
+  fastify.get('/health/ollama', async (request, reply) => {
+    const requestedUrl = request.query.url || 'http://localhost:11434'
+    if (
+      typeof requestedUrl !== 'string' ||
+      (!requestedUrl.startsWith('http://') && !requestedUrl.startsWith('https://'))
+    ) {
+      return reply.code(400).send({ error: 'invalid_url' })
+    }
+
+    const ollamaUrl = requestedUrl.replace(/\/+$/, '')
+    let timeout
+    try {
+      const controller = new AbortController()
+      timeout = setTimeout(() => controller.abort(), 3000)
+
+      const response = await fetch(`${ollamaUrl}/api/tags`, {
+        signal: controller.signal,
+      })
+
+      if (!response.ok) {
+        return { ollamaDetected: false, models: [], url: ollamaUrl }
+      }
+
+      const data = await response.json()
+      const models = (data.models || []).map((model) => ({
+        name: model.name,
+        size: model.size,
+        modified: model.modified_at,
+      }))
+
+      return { ollamaDetected: true, models, url: ollamaUrl }
+    } catch {
+      return { ollamaDetected: false, models: [], url: ollamaUrl }
+    } finally {
+      if (timeout) clearTimeout(timeout)
+    }
+  })
 
   process.on('SIGINT', async () => {
     await fastify.close()
