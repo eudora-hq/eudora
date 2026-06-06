@@ -10,7 +10,7 @@
 
 **Please do not report security vulnerabilities through public GitHub issues.**
 
-Email: security@eudora.dev (or your actual email until you have this set up)
+Email: security@geteudora.com
 
 Include:
 
