@@ -11,6 +11,7 @@ import authenticate from '../middleware/auth.js'
 import { seedFeatureFlags } from '../billing/canAccess.js'
 import { createState, validateState } from '../utils/oauthState.js'
 import { encrypt } from '../utils/encryption.js'
+import { sendPasswordResetEmail, sendWelcomeEmail } from '../utils/email.js'
 
 const resetTokens = new Map()
 
@@ -51,6 +52,9 @@ export default async function authRoutes(fastify) {
     ).run(userId, tenantId, email, passwordHash, 'owner', 0)
 
     seedFeatureFlags(db, tenantId, 'trial')
+    sendWelcomeEmail({ to: email, name }).catch((err) => {
+      console.error('[email] Welcome email failed:', err.message)
+    })
 
     return reply.code(201).send({ tenantId, userId, email })
   })
@@ -118,7 +122,11 @@ export default async function authRoutes(fastify) {
 
     const clientUrl = process.env.CLIENT_URL || 'http://localhost:5173'
     const resetUrl = `${clientUrl}/reset-password?token=${token}`
-    console.log(`[password-reset] Reset URL for ${user.email}: ${resetUrl}`)
+    await sendPasswordResetEmail({
+      to: user.email,
+      resetUrl,
+      name: user.name || null,
+    })
 
     return reply.send({ message })
   })
