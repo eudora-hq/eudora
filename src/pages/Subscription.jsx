@@ -64,10 +64,7 @@ export default function Subscription() {
   const isSelfHosted = import.meta.env.VITE_SELF_HOSTED === 'true'
 
   useEffect(() => {
-    if (isSelfHosted) {
-      setLoading(false)
-      return
-    }
+    // self-hosted: skip early return, show banner inline with plans
 
     api.get('/billing/subscription')
       .then((response) => setSubscription(response.data))

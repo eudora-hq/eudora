@@ -117,6 +117,103 @@ async function start() {
   fastify.register(notificationsRoutes, { prefix: '/notifications' })
 
   fastify.get('/health', async () => ({ status: 'ok', ts: Date.now() }))
+  fastify.get('/health/system', async (request, reply) => {
+    const tenantId = request.tenantId
+    const now = Date.now()
+    const last24Hours = now - 24 * 60 * 60 * 1000
+
+    let dbSizeBytes = db.pragma('page_count', { simple: true })
+      * db.pragma('page_size', { simple: true })
+    try {
+      const { statSync } = await import('fs')
+      const databaseFile = db.pragma('database_list')
+        .find(database => database.name === 'main')?.file
+      if (databaseFile) dbSizeBytes = statSync(databaseFile).size
+    } catch {
+      // SQLite page metrics remain available for in-memory or inaccessible files.
+    }
+
+    const auditStats = db.prepare(`
+      SELECT
+        COUNT(*) AS total_entries,
+        MAX(ts) AS last_entry,
+        MIN(ts) AS first_entry
+      FROM audit_log
+      WHERE tenant_id = ?
+    `).get(tenantId)
+
+    const agentStats = db.prepare(`
+      SELECT
+        COUNT(*) AS total,
+        SUM(CASE WHEN agent_type = 'external' THEN 1 ELSE 0 END) AS external
+      FROM agents
+      WHERE tenant_id = ?
+    `).get(tenantId)
+
+    const cronStats = db.prepare(`
+      SELECT
+        COUNT(*) AS total,
+        SUM(CASE WHEN enabled = 1 THEN 1 ELSE 0 END) AS active
+      FROM cron_jobs
+      WHERE tenant_id = ?
+    `).get(tenantId)
+
+    const recentFailures = db.prepare(`
+      SELECT COUNT(*) AS count
+      FROM cron_runs
+      WHERE tenant_id = ? AND status = 'failed' AND started_at > ?
+    `).get(tenantId, last24Hours)
+
+    const riskEvents = db.prepare(`
+      SELECT
+        COUNT(*) AS total,
+        SUM(CASE WHEN risk_score > 70 THEN 1 ELSE 0 END) AS high_risk,
+        SUM(CASE WHEN action = 'dlp_detected' THEN 1 ELSE 0 END) AS dlp_events
+      FROM audit_log
+      WHERE tenant_id = ? AND ts > ?
+    `).get(tenantId, last24Hours)
+
+    const traceStats = db.prepare(`
+      SELECT COUNT(*) AS total
+      FROM traces
+      WHERE tenant_id = ?
+    `).get(tenantId)
+
+    return reply.send({
+      status: 'operational',
+      timestamp: now,
+      database: {
+        sizeBytes: dbSizeBytes,
+        sizeMB: Math.round((dbSizeBytes / 1024 / 1024) * 100) / 100,
+      },
+      audit: {
+        totalEntries: auditStats.total_entries,
+        lastEntry: auditStats.last_entry,
+        firstEntry: auditStats.first_entry,
+        traceRecords: traceStats.total,
+      },
+      agents: {
+        total: agentStats.total,
+        external: agentStats.external || 0,
+      },
+      scheduler: {
+        totalJobs: cronStats.total,
+        activeJobs: cronStats.active || 0,
+        failuresLast24h: recentFailures.count,
+      },
+      security: {
+        highRiskLast24h: riskEvents.high_risk || 0,
+        dlpEventsLast24h: riskEvents.dlp_events || 0,
+        totalEventsLast24h: riskEvents.total,
+        encryption: 'AES-256-GCM',
+        auditIntegrity: 'SHA-256',
+      },
+      environment: {
+        selfHosted: process.env.SELF_HOSTED === 'true',
+        nodeVersion: process.version,
+      },
+    })
+  })
   fastify.get('/health/ollama', async (request, reply) => {
     const requestedUrl = request.query.url || 'http://localhost:11434'
     if (

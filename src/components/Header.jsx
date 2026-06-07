@@ -151,10 +151,16 @@ export default function Header() {
               </div>
             )}
           </div>
-          <button className="text-text-muted hover:text-primary transition-colors">
+          <button
+            onClick={() => navigate('/reports')}
+            title="Compliance Reports"
+            className="text-text-muted hover:text-primary transition-colors cursor-pointer">
             <span className="material-symbols-outlined text-[20px]">security</span>
           </button>
-          <button className="text-text-muted hover:text-primary transition-colors">
+          <button
+            onClick={() => navigate('/audit')}
+            title="Audit Log"
+            className="text-text-muted hover:text-primary transition-colors cursor-pointer">
             <span className="material-symbols-outlined text-[20px]">terminal</span>
           </button>
         </div>

@@ -102,7 +102,10 @@ export default function Sidebar() {
           <span className="font-mono text-[10px] text-white uppercase tracking-[0.1em] block truncate">{user?.name || user?.email || 'UNKNOWN USER'}</span>
         </div>
         <div className="space-y-1">
-          <button className="w-full flex items-center gap-3 px-2 py-2 text-text-muted hover:text-white font-mono text-[10px] tracking-[0.15em] uppercase transition-colors">
+          <button
+            onClick={() => navigate('/system-health')}
+            className="w-full flex items-center gap-3 px-2 py-2 text-text-muted hover:text-white font-mono text-[10px] tracking-[0.15em] uppercase transition-colors cursor-pointer"
+          >
             <span className="material-symbols-outlined text-[16px]">monitor_heart</span>
             SYSTEM HEALTH
           </button>
@@ -129,9 +132,9 @@ export default function Sidebar() {
               href="https://geteudora.com"
               target="_blank"
               rel="noreferrer"
-              className="font-mono text-[9px] text-text-muted/50 hover:text-primary/60 uppercase tracking-widest transition-colors block"
+              className="font-mono text-[9px] text-primary border border-primary/30 px-2 py-1.5 hover:bg-primary/10 uppercase tracking-widest transition-colors block text-center mt-1"
             >
-              Upgrade to cloud →
+              Upgrade to Cloud →
             </a>
           </div>
         </div>
