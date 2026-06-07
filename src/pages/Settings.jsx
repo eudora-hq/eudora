@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { useAuthStore } from '../store/authStore';
 import api from '../api/client';
 import { PlanModal } from '../components/PlanModal';
@@ -13,6 +14,7 @@ const METRIC_LABELS = {
 };
 
 export default function Settings() {
+  const navigate = useNavigate();
   const isSelfHosted = useSelfHosted();
   const { user, accessToken, refreshToken, setAuth, plan, trialDaysLeft } = useAuthStore();
   const [keys, setKeys] = useState([]);
@@ -28,9 +30,7 @@ export default function Settings() {
   const [passwordForm, setPasswordForm] = useState({ currentPassword: '', newPassword: '', confirmPassword: '' });
   const [profileMessage, setProfileMessage] = useState('');
   const [billingError, setBillingError] = useState('');
-  const [manageError, setManageError] = useState('');
   const [showPlanModal, setShowPlanModal] = useState(false);
-  const [manageLoading, setManageLoading] = useState(false);
 
   useEffect(() => {
     loadSettings();
@@ -142,23 +142,6 @@ export default function Settings() {
       setProfileMessage('PASSWORD UPDATED');
     } catch (err) {
       setProfileMessage(err.response?.status === 404 ? 'Coming soon' : err.response?.data?.error || 'PASSWORD UPDATE FAILED');
-    }
-  };
-
-  const handleManageSubscription = async () => {
-    setManageError('');
-    setManageLoading(true);
-    try {
-      const res = await api.post('/billing/portal');
-      window.location.href = res.data.portalUrl;
-    } catch (err) {
-      if (err.response?.status === 400) {
-        setManageError('No active subscription found. Please contact support.');
-      } else {
-        setManageError('Unable to open subscription portal. Please try again.');
-      }
-    } finally {
-      setManageLoading(false);
     }
   };
 
@@ -291,8 +274,8 @@ export default function Settings() {
             </button>
           )}
           {showManageButton && (
-            <button onClick={handleManageSubscription} disabled={manageLoading} className="primary-btn relative bg-primary text-[#050505] py-3 px-6 font-mono text-[12px] font-bold uppercase tracking-[0.15em] transition-all overflow-hidden active:scale-[0.98] cursor-pointer disabled:opacity-50">
-              <span className="relative z-10">{manageLoading ? 'OPENING...' : 'MANAGE SUBSCRIPTION'}</span>
+            <button onClick={() => navigate('/subscription')} className="primary-btn relative bg-primary text-[#050505] py-3 px-6 font-mono text-[12px] font-bold uppercase tracking-[0.15em] transition-all overflow-hidden active:scale-[0.98] cursor-pointer">
+              <span className="relative z-10">MANAGE SUBSCRIPTION</span>
               <div className="scan-line"></div>
             </button>
           )}
@@ -307,7 +290,6 @@ export default function Settings() {
           {activePlan === 'trial' && <span className="font-mono text-[10px] text-warning uppercase tracking-widest">TRIAL — {trialDaysLeft} DAYS REMAINING</span>}
         </div>
         {billingError && <p className="font-mono text-[10px] text-danger uppercase tracking-widest mb-4">{billingError}</p>}
-        {manageError && <p className="font-mono text-[10px] text-danger uppercase tracking-widest mb-4">{manageError}</p>}
         <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
           {Object.entries(usage?.metrics || placeholderUsage(plan).metrics)
             .filter(([key]) => key !== 'messages_today')

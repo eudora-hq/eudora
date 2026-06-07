@@ -21,6 +21,7 @@ import SelfHostedSetup from './pages/SelfHostedSetup'
 import ResetPassword from './pages/ResetPassword'
 import AcceptInvite from './pages/AcceptInvite'
 import Team from './pages/Team'
+import Subscription from './pages/Subscription'
 
 function ProtectedRoute({ children }) {
   const { isAuthenticated, user } = useAuthStore()
@@ -109,6 +110,7 @@ export default function App() {
           <Route path="audit" element={<AuditLog />} />
           <Route path="settings" element={<Settings />} />
           <Route path="team" element={<Team />} />
+          <Route path="subscription" element={<Subscription />} />
           <Route path="dashboard" element={<Dashboard />} />
           <Route path="workflows" element={<WorkflowCanvas />} />
           <Route path="workflows/:id" element={<WorkflowCanvas />} />

@@ -25,6 +25,55 @@ export default async function billingRoutes(fastify) {
 
   fastify.get('/', async () => [])
 
+  fastify.get('/subscription', async (request, reply) => {
+    const tenant = db.prepare('SELECT * FROM tenants WHERE id = ?').get(request.tenantId)
+    const agentCount = db
+      .prepare('SELECT COUNT(*) AS count FROM agents WHERE tenant_id = ?')
+      .get(request.tenantId).count
+    const memberCount = db
+      .prepare('SELECT COUNT(*) AS count FROM users WHERE tenant_id = ?')
+      .get(request.tenantId).count
+    const oldestAudit = db
+      .prepare('SELECT MIN(ts) AS oldest FROM audit_log WHERE tenant_id = ?')
+      .get(request.tenantId).oldest
+
+    let cancelling = false
+    let cancelAt = null
+    let currentPeriodEnd = null
+    const stripeClient = getStripeClient()
+
+    if (stripeClient && tenant?.stripe_customer_id) {
+      try {
+        const subscriptions = await stripeClient.subscriptions.list({
+          customer: tenant.stripe_customer_id,
+          status: 'active',
+          limit: 1,
+        })
+        const subscription = subscriptions.data[0]
+        cancelling = Boolean(subscription?.cancel_at_period_end)
+        cancelAt = subscription?.cancel_at || null
+        currentPeriodEnd = subscription?.current_period_end || null
+      } catch (err) {
+        fastify.log.warn({ err }, 'Unable to load Stripe subscription status')
+      }
+    }
+
+    return reply.send({
+      plan: tenant?.plan || 'trial',
+      trial_ends_at: tenant?.trial_ends_at ?? null,
+      stripe_customer_id: tenant?.stripe_customer_id ? '***' : null,
+      has_subscription: Boolean(tenant?.stripe_customer_id),
+      cancelling,
+      cancel_at: cancelAt,
+      current_period_end: currentPeriodEnd,
+      usage: {
+        agents: agentCount,
+        seats: memberCount,
+        oldest_audit_entry: oldestAudit,
+      },
+    })
+  })
+
   fastify.post('/checkout', async (request, reply) => {
     const { plan } = request.body || {}
     const checkoutPlan = normalizePlan(plan)
@@ -88,6 +137,86 @@ export default async function billingRoutes(fastify) {
         error: 'stripe_error',
         message: err.message,
       })
+    }
+  })
+
+  fastify.post('/cancel', async (request, reply) => {
+    const tenant = db.prepare('SELECT * FROM tenants WHERE id = ?').get(request.tenantId)
+    if (!tenant?.stripe_customer_id) {
+      return reply.code(400).send({
+        error: 'no_subscription',
+        message: 'No active subscription found.',
+      })
+    }
+
+    const stripeClient = getStripeClient()
+    if (!stripeClient) return reply.code(503).send({ error: 'stripe_not_configured' })
+
+    try {
+      const subscriptions = await stripeClient.subscriptions.list({
+        customer: tenant.stripe_customer_id,
+        status: 'active',
+        limit: 1,
+      })
+      if (!subscriptions.data.length) {
+        return reply.code(400).send({
+          error: 'no_active_subscription',
+          message: 'No active subscription found.',
+        })
+      }
+
+      const subscription = await stripeClient.subscriptions.update(
+        subscriptions.data[0].id,
+        { cancel_at_period_end: true }
+      )
+
+      return reply.send({
+        cancelled: true,
+        cancel_at: subscription.cancel_at,
+        current_period_end: subscription.current_period_end,
+        message: 'Your subscription will be cancelled at the end of the current billing period.',
+      })
+    } catch (err) {
+      return reply.code(500).send({ error: 'stripe_error', message: err.message })
+    }
+  })
+
+  fastify.post('/reactivate', async (request, reply) => {
+    const tenant = db.prepare('SELECT * FROM tenants WHERE id = ?').get(request.tenantId)
+    if (!tenant?.stripe_customer_id) {
+      return reply.code(400).send({ error: 'no_subscription' })
+    }
+
+    const stripeClient = getStripeClient()
+    if (!stripeClient) return reply.code(503).send({ error: 'stripe_not_configured' })
+
+    try {
+      const subscriptions = await stripeClient.subscriptions.list({
+        customer: tenant.stripe_customer_id,
+        status: 'active',
+        limit: 1,
+      })
+      if (!subscriptions.data.length) {
+        return reply.code(400).send({
+          error: 'no_active_subscription',
+          message: 'No active subscription found.',
+        })
+      }
+
+      const subscription = subscriptions.data[0]
+      if (!subscription.cancel_at_period_end) {
+        return reply.code(400).send({
+          error: 'not_cancelled',
+          message: 'Subscription is not scheduled for cancellation.',
+        })
+      }
+
+      await stripeClient.subscriptions.update(subscription.id, {
+        cancel_at_period_end: false,
+      })
+      return reply.send({ reactivated: true })
+    } catch (err) {
+      return reply.code(500).send({ error: 'stripe_error', message: err.message })
     }
   })
 
