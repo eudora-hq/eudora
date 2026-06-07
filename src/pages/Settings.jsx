@@ -37,6 +37,10 @@ export default function Settings() {
   const [mfaLoading, setMfaLoading] = useState(false);
   const [mfaMessage, setMfaMessage] = useState('');
   const [showDisableMfa, setShowDisableMfa] = useState(false);
+  const [tunnelTargetUrl, setTunnelTargetUrl] = useState('http://127.0.0.1:11434');
+  const [tunnel, setTunnel] = useState(null);
+  const [tunnelStatus, setTunnelStatus] = useState(null);
+  const [tunnelLoading, setTunnelLoading] = useState(false);
 
   useEffect(() => {
     loadSettings();
@@ -50,6 +54,10 @@ export default function Settings() {
         api.get('/auth/mfa/status').catch(() => ({ data: { enabled: false, pending: false } })),
       ]);
       setKeys(keysRes.data);
+      const ollamaKey = keysRes.data.find(key => key.provider === 'ollama');
+      if (ollamaKey?.base_url && !ollamaKey.base_url.includes('.tunnel.geteudora.com')) {
+        setTunnelTargetUrl(ollamaKey.base_url);
+      }
       setUsage(usageRes.data);
       setMfaStatus(mfaRes.data);
     } catch {
@@ -200,6 +208,77 @@ export default function Settings() {
     }
   };
 
+  const generateTunnel = async () => {
+    setTunnelLoading(true);
+    setTunnelStatus(null);
+    try {
+      const res = await api.post('/tunnel/token', { targetUrl: tunnelTargetUrl });
+      setTunnel(res.data);
+      setTunnelStatus({ type: 'success', text: 'TUNNEL CONFIG GENERATED' });
+    } catch (err) {
+      setTunnelStatus({
+        type: 'error',
+        text: err.response?.data?.error || 'TUNNEL GENERATION FAILED',
+      });
+    } finally {
+      setTunnelLoading(false);
+    }
+  };
+
+  const testTunnel = async () => {
+    if (!tunnel?.tunnelUrl) return;
+    setTunnelLoading(true);
+    setTunnelStatus({ type: 'loading', text: 'TESTING TUNNEL...' });
+    try {
+      const res = await api.post('/tunnel/test', { tunnelUrl: tunnel.tunnelUrl });
+      if (!res.data.success) throw new Error(res.data.error || `HTTP ${res.data.status || 'error'}`);
+      setTunnelStatus({
+        type: 'success',
+        text: `TUNNEL ONLINE — ${res.data.latencyMs}MS — ${(res.data.models || []).length} MODELS`,
+      });
+    } catch (err) {
+      setTunnelStatus({
+        type: 'error',
+        text: err.response?.data?.error || err.message || 'TUNNEL TEST FAILED',
+      });
+    } finally {
+      setTunnelLoading(false);
+    }
+  };
+
+  const saveTunnelAsOllamaUrl = async () => {
+    if (!tunnel?.tunnelUrl) return;
+    setTunnelLoading(true);
+    setTunnelStatus(null);
+    try {
+      const ollamaKey = keys.find(key => key.provider === 'ollama');
+      let saved;
+      if (ollamaKey) {
+        const res = await api.patch(`/api-keys/${ollamaKey.id}`, {
+          base_url: tunnel.tunnelUrl,
+        });
+        saved = { ...ollamaKey, base_url: res.data.base_url };
+        setKeys(current => current.map(key => key.id === ollamaKey.id ? saved : key));
+      } else {
+        const res = await api.post('/api-keys', {
+          provider: 'ollama',
+          label: 'Ollama Cloud Tunnel',
+          base_url: tunnel.tunnelUrl,
+        });
+        saved = res.data;
+        setKeys(current => [saved, ...current]);
+      }
+      setTunnelStatus({ type: 'success', text: 'OLLAMA CONNECTION UPDATED' });
+    } catch (err) {
+      setTunnelStatus({
+        type: 'error',
+        text: err.response?.data?.error || 'FAILED TO SAVE OLLAMA URL',
+      });
+    } finally {
+      setTunnelLoading(false);
+    }
+  };
+
   const activePlan = usage?.plan || plan;
   const showUpgradeButton = activePlan === 'trial' && !isSelfHosted;
   const showManageButton = ['starter', 'professional', 'enterprise'].includes(activePlan) && !isSelfHosted;
@@ -279,6 +358,93 @@ export default function Settings() {
           </div>
         )}
       </section>
+
+      {isSelfHosted && (
+        <section className="border border-[#262626] bg-[#0a0a0a] p-6 lg:p-8">
+          <div className="flex items-start gap-3 mb-6">
+            <span className="material-symbols-outlined text-primary text-[20px]">cable</span>
+            <div>
+              <h2 className="font-mono text-[14px] text-white uppercase font-bold tracking-widest">Use With Cloud Eudora</h2>
+              <p className="font-mono text-[9px] text-text-muted mt-1">
+                Expose this Ollama instance through an authenticated FRP tunnel.
+              </p>
+            </div>
+          </div>
+
+          <div className="space-y-5 border border-[#262626] bg-[#050505] p-5">
+            <FormField
+              label="Local Ollama URL"
+              value={tunnelTargetUrl}
+              onChange={setTunnelTargetUrl}
+              placeholder="http://127.0.0.1:11434"
+            />
+
+            <button
+              onClick={generateTunnel}
+              disabled={tunnelLoading || !tunnelTargetUrl}
+              className="border border-primary/40 text-primary hover:bg-primary/10 px-5 py-2.5 font-mono text-[10px] uppercase tracking-widest cursor-pointer disabled:opacity-50 transition-colors"
+            >
+              {tunnelLoading && !tunnel ? 'Generating...' : 'Generate Tunnel Token'}
+            </button>
+
+            {tunnel && (
+              <div className="space-y-4 border-t border-[#1a1a1a] pt-5">
+                <div className="space-y-1">
+                  <p className="font-mono text-[9px] text-text-muted uppercase tracking-widest">Tunnel URL</p>
+                  <code className="block border border-[#262626] bg-[#0a0a0a] p-3 font-mono text-[11px] text-primary break-all">
+                    {tunnel.tunnelUrl}
+                  </code>
+                </div>
+                <div className="space-y-1">
+                  <div className="flex items-center justify-between">
+                    <p className="font-mono text-[9px] text-text-muted uppercase tracking-widest">frpc.toml</p>
+                    <button
+                      onClick={() => navigator.clipboard.writeText(tunnel.instructions.config)}
+                      className="font-mono text-[9px] text-text-muted hover:text-primary uppercase tracking-widest cursor-pointer transition-colors"
+                    >
+                      Copy Config
+                    </button>
+                  </div>
+                  <pre className="border border-[#262626] bg-[#0a0a0a] p-4 font-mono text-[10px] text-text-muted whitespace-pre-wrap break-all overflow-x-auto">
+                    {tunnel.instructions.config}
+                  </pre>
+                  <p className="font-mono text-[9px] text-text-muted">
+                    Download FRP, save this configuration, then run <code className="text-primary">{tunnel.instructions.command}</code>.
+                  </p>
+                </div>
+                <div className="flex flex-col sm:flex-row gap-3">
+                  <button
+                    onClick={testTunnel}
+                    disabled={tunnelLoading}
+                    className="border border-[#262626] text-text-muted hover:border-primary hover:text-primary px-5 py-2.5 font-mono text-[10px] uppercase tracking-widest cursor-pointer disabled:opacity-50 transition-colors"
+                  >
+                    Test Tunnel
+                  </button>
+                  <button
+                    onClick={saveTunnelAsOllamaUrl}
+                    disabled={tunnelLoading}
+                    className="bg-primary text-[#050505] px-5 py-2.5 font-mono text-[10px] font-bold uppercase tracking-widest cursor-pointer disabled:opacity-50 hover:bg-primary/90 transition-colors"
+                  >
+                    Save As Ollama URL
+                  </button>
+                </div>
+              </div>
+            )}
+
+            {tunnelStatus && (
+              <p className={`font-mono text-[10px] uppercase tracking-widest ${
+                tunnelStatus.type === 'success'
+                  ? 'text-primary'
+                  : tunnelStatus.type === 'error'
+                    ? 'text-danger'
+                    : 'text-warning'
+              }`}>
+                {tunnelStatus.text}
+              </p>
+            )}
+          </div>
+        </section>
+      )}
 
       <section className="border border-[#262626] bg-[#0a0a0a] p-6 lg:p-8">
         <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 mb-6">

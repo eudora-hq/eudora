@@ -171,6 +171,44 @@ export default async function apiKeysRoutes(fastify) {
     return reply.send(rows)
   })
 
+  // PATCH /api-keys/:id
+  fastify.patch('/:id', async (request, reply) => {
+    const { id } = request.params
+    const { base_url } = request.body || {}
+    const row = db.prepare(`
+      SELECT id, tenant_id, provider
+      FROM api_keys
+      WHERE id = ?
+    `).get(id)
+
+    if (!row) return reply.code(404).send({ error: 'not_found' })
+    if (row.tenant_id !== request.tenantId) {
+      return reply.code(403).send({ error: 'forbidden' })
+    }
+    if (row.provider !== 'ollama') {
+      return reply.code(400).send({ error: 'provider_not_supported' })
+    }
+
+    let parsed
+    try {
+      parsed = new URL(base_url)
+    } catch {
+      return reply.code(400).send({ error: 'invalid_base_url' })
+    }
+    if (!['http:', 'https:'].includes(parsed.protocol)) {
+      return reply.code(400).send({ error: 'invalid_base_url' })
+    }
+
+    const normalizedUrl = base_url.replace(/\/+$/, '')
+    db.prepare(`
+      UPDATE api_keys
+      SET base_url = ?
+      WHERE id = ? AND tenant_id = ?
+    `).run(normalizedUrl, id, request.tenantId)
+
+    return reply.send({ id, provider: row.provider, base_url: normalizedUrl })
+  })
+
   // DELETE /api-keys/:id
   fastify.delete('/:id', async (request, reply) => {
     const { id } = request.params

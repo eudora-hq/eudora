@@ -31,6 +31,7 @@ import analyticsRoutes from './routes/analytics.js'
 import { loadAllJobs } from './scheduler/cronRunner.js'
 
 const PORT = process.env.PORT || 3001
+const tunnelTokens = new Map()
 
 async function start() {
   const fastify = Fastify({ logger: true })
@@ -125,6 +126,106 @@ async function start() {
   fastify.register(analyticsRoutes, { prefix: '/analytics' })
 
   fastify.get('/health', async () => ({ status: 'ok', ts: Date.now() }))
+  fastify.post('/tunnel/token', async (request, reply) => {
+    const { targetUrl = 'http://127.0.0.1:11434' } = request.body || {}
+
+    let target
+    try {
+      target = new URL(targetUrl)
+    } catch {
+      return reply.code(400).send({ error: 'invalid_target_url' })
+    }
+    if (!['http:', 'https:'].includes(target.protocol)) {
+      return reply.code(400).send({ error: 'invalid_target_url' })
+    }
+
+    const crypto = await import('crypto')
+    const tunnelToken = crypto.default.randomBytes(24).toString('hex')
+    const tenantPrefix = String(request.tenantId)
+      .toLowerCase()
+      .replace(/[^a-z0-9-]/g, '')
+      .substring(0, 8) || 'eudora'
+    const subdomain = `${tenantPrefix}-ollama`
+    const tunnelUrl = `https://${subdomain}.tunnel.geteudora.com`
+    const localPort = target.port || (target.protocol === 'https:' ? '443' : '80')
+
+    tunnelTokens.set(request.tenantId, {
+      token: tunnelToken,
+      targetUrl: target.toString().replace(/\/+$/, ''),
+      subdomain,
+      createdAt: Date.now(),
+    })
+
+    return reply.send({
+      tunnelToken,
+      subdomain,
+      tunnelUrl,
+      instructions: {
+        download: 'https://github.com/fatedier/frp/releases',
+        config: `[common]
+server_addr = tunnel.geteudora.com
+server_port = 7000
+token = ${tunnelToken}
+
+[ollama]
+type = http
+local_ip = ${target.hostname}
+local_port = ${localPort}
+custom_domains = ${subdomain}.tunnel.geteudora.com`,
+        command: './frpc -c frpc.toml',
+      },
+    })
+  })
+  fastify.post('/tunnel/test', async (request, reply) => {
+    const { tunnelUrl } = request.body || {}
+
+    let parsed
+    try {
+      parsed = new URL(tunnelUrl)
+    } catch {
+      return reply.code(400).send({ error: 'invalid_tunnel_url' })
+    }
+    if (
+      parsed.protocol !== 'https:' ||
+      !parsed.hostname.endsWith('.tunnel.geteudora.com')
+    ) {
+      return reply.code(400).send({ error: 'invalid_tunnel_url' })
+    }
+
+    let timeout
+    const startedAt = Date.now()
+    try {
+      const controller = new AbortController()
+      timeout = setTimeout(() => controller.abort(), 5000)
+      const response = await fetch(
+        `${tunnelUrl.replace(/\/+$/, '')}/api/tags`,
+        { signal: controller.signal }
+      )
+
+      if (!response.ok) {
+        return reply.send({
+          success: false,
+          status: response.status,
+          latencyMs: Date.now() - startedAt,
+        })
+      }
+
+      const data = await response.json().catch(() => ({}))
+      return reply.send({
+        success: true,
+        latencyMs: Date.now() - startedAt,
+        models: data.models || [],
+      })
+    } catch (err) {
+      return reply.send({
+        success: false,
+        error: err.name === 'AbortError' ? 'timeout' : err.message,
+        latencyMs: Date.now() - startedAt,
+      })
+    } finally {
+      clearTimeout(timeout)
+    }
+  })
   fastify.get('/health/system', async (request, reply) => {
     const tenantId = request.tenantId
     const now = Date.now()
