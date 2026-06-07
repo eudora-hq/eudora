@@ -25,6 +25,7 @@ import Subscription from './pages/Subscription'
 import SystemHealth from './pages/SystemHealth'
 import Integrations from './pages/Integrations'
 import OAuthCallback from './pages/OAuthCallback'
+import Analytics from './pages/Analytics'
 
 function ProtectedRoute({ children }) {
   const { isAuthenticated, user } = useAuthStore()
@@ -121,6 +122,7 @@ export default function App() {
           <Route path="cron" element={<CronJobs />} />
           <Route path="system-health" element={<SystemHealth />} />
           <Route path="integrations" element={<Integrations />} />
+          <Route path="analytics" element={<Analytics />} />
         </Route>
         <Route path="*" element={<Navigate to="/login" replace />} />
       </Routes>

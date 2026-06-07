@@ -20,6 +20,7 @@ export default function Sidebar() {
 
   const navItems = [
     { id: 'dashboard', icon: 'grid_view', label: 'COMMAND CENTER', path: '/dashboard' },
+    { id: 'analytics', icon: 'analytics', label: 'ANALYTICS', path: '/analytics' },
     { id: 'agents', icon: 'smart_toy', label: 'AGENT FLEET', path: '/agents' },
     { id: 'templates', icon: 'grid_view', label: 'TEMPLATES', path: '/templates' },
     { id: 'chat', icon: 'chat', label: 'NEURAL INTERFACE', path: '/chat' },

@@ -27,6 +27,7 @@ import reportsRoutes from './routes/reports.js'
 import teamRoutes from './routes/team.js'
 import notificationsRoutes from './routes/notifications.js'
 import integrationsRoutes from './routes/integrations.js'
+import analyticsRoutes from './routes/analytics.js'
 import { loadAllJobs } from './scheduler/cronRunner.js'
 
 const PORT = process.env.PORT || 3001
@@ -121,6 +122,7 @@ async function start() {
   fastify.register(teamRoutes, { prefix: '/team' })
   fastify.register(notificationsRoutes, { prefix: '/notifications' })
   fastify.register(integrationsRoutes, { prefix: '/integrations' })
+  fastify.register(analyticsRoutes, { prefix: '/analytics' })
 
   fastify.get('/health', async () => ({ status: 'ok', ts: Date.now() }))
   fastify.get('/health/system', async (request, reply) => {
