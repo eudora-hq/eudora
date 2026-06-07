@@ -134,13 +134,13 @@ function gatherTraceData(db, tenantId, dateFrom, dateTo, agentId, traceMode, eve
               try {
                 const row = db.prepare('SELECT filename FROM context_files WHERE id = ?').get(id)
                 if (row?.filename) return { id, filename: row.filename }
-              } catch {}
+              } catch (_e) {}
             }
             return item
           })
           return { ...trace, context_injected: JSON.stringify(enriched) }
         }
-      } catch {}
+      } catch (_e) {}
       return trace
     })
 
