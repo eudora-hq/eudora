@@ -1,0 +1,26 @@
+{
+  "name": "@eudora/sdk",
+  "version": "0.1.0",
+  "description": "Eudora AI Behavioral Compliance SDK for Node.js",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "tsc",
+    "test": "vitest run"
+  },
+  "keywords": [
+    "eudora",
+    "ai",
+    "compliance",
+    "audit",
+    "dora"
+  ],
+  "license": "MIT",
+  "devDependencies": {
+    "typescript": "^5.8.3",
+    "vitest": "^4.1.8"
+  }
+}
