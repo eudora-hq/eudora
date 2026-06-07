@@ -8,6 +8,7 @@ export function checkTrialExpiry(request, reply, done) {
   const skipTrialCheck =
     path.startsWith('/auth') ||
     path.startsWith('/billing') ||
+    path.startsWith('/notifications') ||
     path === '/account/export' ||
     path.startsWith('/health')
 

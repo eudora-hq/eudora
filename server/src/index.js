@@ -25,6 +25,7 @@ import accountRoutes from './routes/account.js'
 import proxyRoutes from './routes/proxy.js'
 import reportsRoutes from './routes/reports.js'
 import teamRoutes from './routes/team.js'
+import notificationsRoutes from './routes/notifications.js'
 import { loadAllJobs } from './scheduler/cronRunner.js'
 
 const PORT = process.env.PORT || 3001
@@ -113,6 +114,7 @@ async function start() {
   fastify.register(proxyRoutes, { prefix: '/proxy' })
   fastify.register(reportsRoutes, { prefix: '/reports' })
   fastify.register(teamRoutes, { prefix: '/team' })
+  fastify.register(notificationsRoutes, { prefix: '/notifications' })
 
   fastify.get('/health', async () => ({ status: 'ok', ts: Date.now() }))
   fastify.get('/health/ollama', async (request, reply) => {

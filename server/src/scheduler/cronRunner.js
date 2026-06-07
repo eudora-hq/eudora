@@ -12,6 +12,7 @@ import { score } from '../security/riskScorer.js'
 import { log, AUDIT_ACTIONS } from '../audit/auditLogger.js'
 import { record } from '../audit/traceRecorder.js'
 import { getHumanRoot } from '../utils/ownershipChain.js'
+import { createNotification } from '../utils/notify.js'
 import cronParser from 'cron-parser'
 
 const activeTasks = new Map()
@@ -94,6 +95,7 @@ async function runJob(jobId) {
       ).run('failed', message, durationMs, Date.now(), runId)
       db.prepare('UPDATE cron_jobs SET last_run_at = ?, next_run_at = ? WHERE id = ?')
         .run(Date.now(), nextRunTimestamp(job.schedule), job.id)
+      createCronFailureNotification(db, job, message)
       return
     }
 
@@ -135,6 +137,7 @@ async function runJob(jobId) {
       db.prepare(
         'INSERT INTO usage_events (id, tenant_id, event_type, value, ts) VALUES (?, ?, ?, ?, ?)'
       ).run(nanoid(), job.tenant_id, 'cron_run', 0, Date.now())
+      createCronFailureNotification(db, job, content)
       return
     }
 
@@ -231,12 +234,23 @@ async function runJob(jobId) {
           initiatedByUserId: humanRootId,
           agentChain: agent?.id ? [agent.id] : [],
         })
+        createCronFailureNotification(db, job, errorMessage)
       }
     } catch (updateErr) {
       console.error('[cron] Failed to mark job failed:', jobId, updateErr)
     }
     console.error('[cron] Run failed:', jobId, err)
   }
+}
+
+function createCronFailureNotification(db, job, errorMessage) {
+  createNotification(db, {
+    tenantId: job.tenant_id,
+    type: 'cron_failure',
+    title: 'Scheduled job failed',
+    message: `Job "${job.name}" failed: ${String(errorMessage).substring(0, 100)}`,
+    actionUrl: '/cron',
+  })
 }
 
 export const __test = { runJob, activeTasks }

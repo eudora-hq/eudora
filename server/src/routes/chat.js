@@ -15,6 +15,7 @@ import { enforceScope } from '../security/scopeEnforcer.js'
 import { score } from '../security/riskScorer.js'
 import { log, AUDIT_ACTIONS } from '../audit/auditLogger.js'
 import { record } from '../audit/traceRecorder.js'
+import { createNotification } from '../utils/notify.js'
 
 export default async function chatRoutes(fastify) {
   const db = fastify.db
@@ -97,6 +98,23 @@ export default async function chatRoutes(fastify) {
           durationMs,
           riskScore,
         })
+        if (sanitiserResult.dlpDetected) {
+          createNotification(db, {
+            tenantId: request.tenantId,
+            type: 'dlp_detected',
+            title: 'Credential detected and blocked',
+            message: `A credential or secret was detected in a message to agent "${agent.name}" and was redacted.`,
+            actionUrl: '/audit',
+          })
+        }
+        createNotification(db, {
+          tenantId: request.tenantId,
+          type: 'agent_blocked',
+          title: 'Agent request blocked',
+          message: `A request to agent "${agent.name}" was blocked by the security layer.`,
+          actionUrl: '/audit',
+        })
+        createHighRiskNotification(db, request.tenantId, agent.name, riskScore)
         return reply.code(400).send({
           error: 'request_blocked',
           message: 'Your message was blocked by the security layer.',
@@ -112,6 +130,7 @@ export default async function chatRoutes(fastify) {
 
       // Step 8 — Risk score
       const riskScore = score(sanitiserResult, guardResult, scopeResult)
+      createHighRiskNotification(db, request.tenantId, agent.name, riskScore)
 
       // Step 9 — Store assistant message
       db.prepare(
@@ -255,5 +274,17 @@ export default async function chatRoutes(fastify) {
     return reply.send(
       traces.map(t => ({ ...t, context_injected: JSON.parse(t.context_injected) }))
     )
+  })
+}
+
+function createHighRiskNotification(db, tenantId, agentName, riskScore) {
+  if (riskScore <= 70) return
+
+  createNotification(db, {
+    tenantId,
+    type: 'high_risk',
+    title: 'High-risk interaction detected',
+    message: `Risk score ${riskScore}/100 on agent "${agentName}". Review in audit log.`,
+    actionUrl: '/audit',
   })
 }

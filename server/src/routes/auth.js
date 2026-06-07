@@ -12,6 +12,7 @@ import { seedFeatureFlags } from '../billing/canAccess.js'
 import { createState, validateState } from '../utils/oauthState.js'
 import { encrypt } from '../utils/encryption.js'
 import { sendPasswordResetEmail, sendWelcomeEmail } from '../utils/email.js'
+import { createNotification } from '../utils/notify.js'
 
 const resetTokens = new Map()
 
@@ -274,6 +275,21 @@ export default async function authRoutes(fastify) {
       userId,
       tenantId: invite.tenant_id,
       role: invite.role,
+    })
+    const owner = db.prepare(`
+      SELECT id
+      FROM users
+      WHERE tenant_id = ? AND role = 'owner'
+      ORDER BY rowid ASC
+      LIMIT 1
+    `).get(invite.tenant_id)
+    createNotification(db, {
+      tenantId: invite.tenant_id,
+      userId: owner?.id || null,
+      type: 'invite_accepted',
+      title: 'Team member joined',
+      message: `${name.trim()} (${invite.email}) accepted your invitation and joined as ${invite.role}.`,
+      actionUrl: '/team',
     })
 
     return reply.code(201).send({
