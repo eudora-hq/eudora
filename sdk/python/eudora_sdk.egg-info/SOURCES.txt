@@ -1,0 +1,9 @@
+pyproject.toml
+eudora/__init__.py
+eudora/client.py
+eudora_sdk.egg-info/PKG-INFO
+eudora_sdk.egg-info/SOURCES.txt
+eudora_sdk.egg-info/dependency_links.txt
+eudora_sdk.egg-info/requires.txt
+eudora_sdk.egg-info/top_level.txt
+tests/test_client.py

@@ -1,0 +1,8 @@
+Metadata-Version: 2.4
+Name: eudora-sdk
+Version: 0.1.0
+Summary: Eudora AI Behavioral Compliance SDK for Python
+License: MIT
+Keywords: eudora,ai,compliance,audit,dora
+Requires-Python: >=3.8
+Requires-Dist: httpx<1,>=0.24
