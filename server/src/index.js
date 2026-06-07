@@ -24,6 +24,7 @@ import onboardingRoutes from './routes/onboarding.js'
 import accountRoutes from './routes/account.js'
 import proxyRoutes from './routes/proxy.js'
 import reportsRoutes from './routes/reports.js'
+import teamRoutes from './routes/team.js'
 import { loadAllJobs } from './scheduler/cronRunner.js'
 
 const PORT = process.env.PORT || 3001
@@ -71,6 +72,7 @@ async function start() {
     'POST /auth/login',
     'POST /auth/forgot-password',
     'POST /auth/reset-password',
+    'POST /auth/accept-invite',
     'POST /auth/refresh',
     'POST /billing/webhook',
     'GET /auth/oauth/callback/openai',
@@ -80,6 +82,7 @@ async function start() {
     const path = request.url.split('?')[0]
     const key = `${request.method} ${path}`
     if (PUBLIC_ROUTES.has(key)) return
+    if (request.method === 'GET' && path.startsWith('/auth/invite/')) return
     if (path.startsWith('/proxy/')) return
 
     // Chain: authenticate → scopeToTenant → checkTrialExpiry
@@ -109,6 +112,7 @@ async function start() {
   fastify.register(accountRoutes, { prefix: '/account' })
   fastify.register(proxyRoutes, { prefix: '/proxy' })
   fastify.register(reportsRoutes, { prefix: '/reports' })
+  fastify.register(teamRoutes, { prefix: '/team' })
 
   fastify.get('/health', async () => ({ status: 'ok', ts: Date.now() }))
   fastify.get('/health/ollama', async (request, reply) => {

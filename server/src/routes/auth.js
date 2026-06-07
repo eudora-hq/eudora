@@ -19,6 +19,10 @@ function isValidEmail(email) {
   return typeof email === 'string' && /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)
 }
 
+function hasColumn(db, table, column) {
+  return db.prepare(`PRAGMA table_info(${table})`).all().some((item) => item.name === column)
+}
+
 export default async function authRoutes(fastify) {
   const db = fastify.db
 
@@ -47,9 +51,15 @@ export default async function authRoutes(fastify) {
 
     const passwordHash = await hashPassword(password)
     const userId = nanoid()
-    db.prepare(
-      'INSERT INTO users (id, tenant_id, email, password_hash, role, onboarding_completed) VALUES (?, ?, ?, ?, ?, ?)'
-    ).run(userId, tenantId, email, passwordHash, 'owner', 0)
+    if (hasColumn(db, 'users', 'name')) {
+      db.prepare(
+        'INSERT INTO users (id, tenant_id, email, name, password_hash, role, onboarding_completed) VALUES (?, ?, ?, ?, ?, ?, ?)'
+      ).run(userId, tenantId, email.toLowerCase(), name.trim(), passwordHash, 'owner', 0)
+    } else {
+      db.prepare(
+        'INSERT INTO users (id, tenant_id, email, password_hash, role, onboarding_completed) VALUES (?, ?, ?, ?, ?, ?)'
+      ).run(userId, tenantId, email.toLowerCase(), passwordHash, 'owner', 0)
+    }
 
     seedFeatureFlags(db, tenantId, 'trial')
     sendWelcomeEmail({ to: email, name }).catch((err) => {
@@ -91,6 +101,7 @@ export default async function authRoutes(fastify) {
       user: {
         id: user.id,
         email: user.email,
+        name: user.name || null,
         role: user.role,
         plan: tenant?.plan || 'trial',
         trial_ends_at: tenant?.trial_ends_at ?? null,
@@ -169,6 +180,118 @@ export default async function authRoutes(fastify) {
     return reply.send({ message: 'Password updated successfully.' })
   })
 
+  fastify.get('/auth/invite/:token', async (request, reply) => {
+    const invite = db.prepare(`
+      SELECT i.*, t.name AS tenant_name
+      FROM invites i
+      JOIN tenants t ON t.id = i.tenant_id
+      WHERE i.token = ? AND i.status = 'pending' AND i.expires_at > ?
+    `).get(request.params.token, Date.now())
+
+    if (!invite) {
+      return reply.code(404).send({
+        error: 'invalid_invite',
+        message: 'This invite link is invalid or has expired.',
+      })
+    }
+
+    return reply.send({
+      email: invite.email,
+      role: invite.role,
+      tenantName: invite.tenant_name,
+      expiresAt: invite.expires_at,
+    })
+  })
+
+  fastify.post('/auth/accept-invite', async (request, reply) => {
+    const { token, name, password } = request.body || {}
+
+    if (!token || !name || !password) {
+      return reply.code(400).send({ error: 'missing_fields' })
+    }
+    if (password.length < 8) {
+      return reply.code(400).send({ error: 'password_too_short' })
+    }
+
+    const invite = db.prepare(`
+      SELECT *
+      FROM invites
+      WHERE token = ? AND status = 'pending' AND expires_at > ?
+    `).get(token, Date.now())
+
+    if (!invite) {
+      return reply.code(404).send({
+        error: 'invalid_invite',
+        message: 'This invite link is invalid or has expired.',
+      })
+    }
+
+    const existing = db
+      .prepare('SELECT id FROM users WHERE LOWER(email) = LOWER(?)')
+      .get(invite.email)
+    if (existing) {
+      return reply.code(409).send({
+        error: 'email_taken',
+        message: 'This email is already registered. Try logging in.',
+      })
+    }
+
+    const passwordHash = await hashPassword(password)
+    const userId = nanoid()
+    const now = Date.now()
+    const { raw, hashed } = generateRefreshToken()
+
+    db.transaction(() => {
+      db.prepare(`
+        INSERT INTO users (
+          id, tenant_id, email, name, password_hash, role, onboarding_completed
+        )
+        VALUES (?, ?, ?, ?, ?, ?, 1)
+      `).run(
+        userId,
+        invite.tenant_id,
+        invite.email,
+        name.trim(),
+        passwordHash,
+        invite.role
+      )
+
+      db.prepare('UPDATE invites SET status = ?, accepted_at = ? WHERE id = ?')
+        .run('accepted', now, invite.id)
+
+      db.prepare(`
+        INSERT INTO refresh_tokens (
+          id, user_id, token_hash, expires_at, created_at
+        )
+        VALUES (?, ?, ?, ?, ?)
+      `).run(nanoid(), userId, hashed, now + 30 * 24 * 60 * 60 * 1000, now)
+    })()
+
+    const tenant = db
+      .prepare('SELECT plan, trial_ends_at FROM tenants WHERE id = ?')
+      .get(invite.tenant_id)
+    const accessToken = generateAccessToken({
+      userId,
+      tenantId: invite.tenant_id,
+      role: invite.role,
+    })
+
+    return reply.code(201).send({
+      accessToken,
+      refreshToken: raw,
+      user: {
+        id: userId,
+        email: invite.email,
+        name: name.trim(),
+        role: invite.role,
+        plan: tenant?.plan || 'trial',
+        trial_ends_at: tenant?.trial_ends_at ?? null,
+        onboardingCompleted: true,
+      },
+      onboardingCompleted: true,
+    })
+  })
+
   fastify.post('/auth/refresh', async (request, reply) => {
     const { refreshToken } = request.body || {}
 
@@ -223,6 +346,9 @@ export default async function authRoutes(fastify) {
     }
     if (typeof name === 'string' && name.trim()) {
       db.prepare('UPDATE tenants SET name = ? WHERE id = ?').run(name.trim(), request.tenantId)
+      if (hasColumn(db, 'users', 'name')) {
+        db.prepare('UPDATE users SET name = ? WHERE id = ?').run(name.trim(), userId)
+      }
     }
 
     return reply.code(200).send({ success: true })

@@ -195,3 +195,79 @@ export async function sendWelcomeEmail({ to, name }) {
     return { success: false, reason: err.message }
   }
 }
+
+export async function sendInviteEmail({ to, inviterName, inviteUrl, role, tenantName }) {
+  const client = getResend()
+  if (!client) {
+    console.log(`[email] Invite URL for ${to}: ${inviteUrl}`)
+    return { success: false, reason: 'no_api_key' }
+  }
+
+  try {
+    const safeInviterName = escapeHtml(inviterName)
+    const safeTenantName = escapeHtml(tenantName)
+    const safeRole = escapeHtml(role)
+    const safeInviteUrl = escapeHtml(inviteUrl)
+    const { data, error } = await client.emails.send({
+      from: `Eudora <${getFromAddress()}>`,
+      to: [to],
+      subject: `${inviterName} invited you to join Eudora`,
+      html: `
+<!DOCTYPE html>
+<html>
+<body style="margin:0;padding:0;background:#050505;font-family:monospace,sans-serif;">
+  <table width="100%" cellpadding="0" cellspacing="0" style="background:#050505;padding:40px 20px;">
+    <tr><td align="center">
+      <table width="560" cellpadding="0" cellspacing="0" style="background:#0a0a0a;border:1px solid #1a1a1a;max-width:560px;width:100%;">
+        <tr>
+          <td style="padding:32px 40px 24px;border-bottom:1px solid #1a1a1a;">
+            <p style="margin:0;font-family:monospace;font-size:11px;color:#10b981;letter-spacing:0.15em;text-transform:uppercase;">EUDORA</p>
+            <p style="margin:4px 0 0;font-family:monospace;font-size:9px;color:#666;text-transform:uppercase;letter-spacing:0.1em;">AI Behavioral Compliance</p>
+          </td>
+        </tr>
+        <tr>
+          <td style="padding:32px 40px;">
+            <h1 style="margin:0 0 16px;font-family:monospace;font-size:18px;font-weight:700;color:#fff;text-transform:uppercase;">
+              You've been invited
+            </h1>
+            <p style="margin:0 0 24px;font-family:monospace;font-size:12px;color:#888;line-height:1.6;">
+              <strong style="color:#fff;">${safeInviterName}</strong> has invited you to join
+              <strong style="color:#fff;">${safeTenantName}</strong> on Eudora as a <strong style="color:#10b981;">${safeRole}</strong>.
+            </p>
+            <table cellpadding="0" cellspacing="0" style="margin:0 0 24px;">
+              <tr>
+                <td style="background:#10b981;">
+                  <a href="${safeInviteUrl}"
+                     style="display:inline-block;padding:14px 32px;font-family:monospace;font-size:11px;font-weight:700;color:#050505;text-decoration:none;text-transform:uppercase;letter-spacing:0.15em;">
+                    Accept Invitation &rarr;
+                  </a>
+                </td>
+              </tr>
+            </table>
+            <p style="margin:0;font-family:monospace;font-size:10px;color:#555;">
+              This invite expires in 7 days. If you didn't expect this, ignore it.
+            </p>
+          </td>
+        </tr>
+        <tr>
+          <td style="padding:16px 40px;border-top:1px solid #1a1a1a;">
+            <p style="margin:0;font-family:monospace;font-size:9px;color:#333;">
+              &copy; 2026 Eudora &middot; <a href="https://geteudora.com" style="color:#555;text-decoration:none;">geteudora.com</a>
+            </p>
+          </td>
+        </tr>
+      </table>
+    </td></tr>
+  </table>
+</body>
+</html>
+      `,
+      text: `${inviterName} invited you to join ${tenantName} on Eudora.\n\nAccept invitation: ${inviteUrl}\n\nThis invite expires in 7 days.\n\n© 2026 Eudora`,
+    })
+
+    if (error) return { success: false, reason: error.message }
+    return { success: true, id: data?.id }
+  } catch (err) {
+    return { success: false, reason: err.message }
+  }
+}

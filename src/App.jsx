@@ -19,6 +19,8 @@ import BillingSuccess from './pages/BillingSuccess'
 import Templates from './pages/Templates'
 import SelfHostedSetup from './pages/SelfHostedSetup'
 import ResetPassword from './pages/ResetPassword'
+import AcceptInvite from './pages/AcceptInvite'
+import Team from './pages/Team'
 
 function ProtectedRoute({ children }) {
   const { isAuthenticated, user } = useAuthStore()
@@ -93,6 +95,7 @@ export default function App() {
       <Routes>
         <Route path="/login" element={<AuthRoute><Login /></AuthRoute>} />
         <Route path="/reset-password" element={<ResetPassword />} />
+        <Route path="/accept-invite" element={<AcceptInvite />} />
         <Route path="/onboarding" element={<Onboarding />} />
         <Route path="/setup" element={<ProtectedRoute><SelfHostedSetup /></ProtectedRoute>} />
         <Route path="/billing/success" element={<BillingSuccess />} />
@@ -105,6 +108,7 @@ export default function App() {
           <Route path="chat" element={<Chat />} />
           <Route path="audit" element={<AuditLog />} />
           <Route path="settings" element={<Settings />} />
+          <Route path="team" element={<Team />} />
           <Route path="dashboard" element={<Dashboard />} />
           <Route path="workflows" element={<WorkflowCanvas />} />
           <Route path="workflows/:id" element={<WorkflowCanvas />} />

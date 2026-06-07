@@ -26,6 +26,9 @@ export default function Sidebar() {
     { id: 'workflows', icon: 'account_tree', label: 'WORKFLOWS', path: '/workflows' },
     { id: 'audit', icon: 'receipt_long', label: 'NEXUS AUDIT', path: '/audit' },
     { id: 'cron', icon: 'calendar_today', label: 'SCHEDULED JOBS', path: '/cron' },
+    ...((plan === 'professional' || plan === 'enterprise' || isSelfHosted)
+      ? [{ id: 'team', icon: 'group', label: 'TEAM', path: '/team' }]
+      : []),
     { id: 'settings', icon: 'settings', label: 'SETTINGS', path: '/settings' },
   ];
 
