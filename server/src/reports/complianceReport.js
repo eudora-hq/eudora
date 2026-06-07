@@ -124,24 +124,27 @@ function gatherTraceData(db, tenantId, dateFrom, dateTo, agentId, traceMode, eve
     }
 
     // Enrich traces — resolve context file IDs to filenames
-    const enrichedTraces = traces.map(trace => {
+    function resolveContextItem(item) {
+      const id = typeof item === 'string' ? item : (item.id || item.contextFileId)
+      if (!id) return item
+      try {
+        const row = db.prepare('SELECT filename FROM context_files WHERE id = ?').get(id)
+        return row?.filename ? { id, filename: row.filename } : item
+      } catch {
+        return item
+      }
+    }
+    const enrichedTraces = traces.map((trace) => {
       try {
         const ctx = JSON.parse(trace.context_injected || '[]')
-        if (Array.isArray(ctx) && ctx.length > 0) {
-          const enriched = ctx.map(item => {
-            const id = typeof item === 'string' ? item : (item.id || item.contextFileId)
-            if (id) {
-              try {
-                const row = db.prepare('SELECT filename FROM context_files WHERE id = ?').get(id)
-                if (row?.filename) return { id, filename: row.filename }
-              } catch (_e) { /* filename lookup failed, use raw id */ }
-            }
-            return item
-          })
-          return { ...trace, context_injected: JSON.stringify(enriched) }
+        if (!Array.isArray(ctx) || ctx.length === 0) return trace
+        return {
+          ...trace,
+          context_injected: JSON.stringify(ctx.map((item) => resolveContextItem(item))),
         }
-      } catch (_e) { /* context injection parse failed, use original trace */ }
-      return trace
+      } catch {
+        return trace
+      }
     })
 
     return {
