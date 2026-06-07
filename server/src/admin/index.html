@@ -1,0 +1,557 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Eudora Admin</title>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    :root {
+      --bg: #050505;
+      --surface: #0a0a0a;
+      --border: #1a1a1a;
+      --border-strong: #2a2a2a;
+      --green: #10b981;
+      --green-soft: rgba(16, 185, 129, .08);
+      --text: #f5f5f5;
+      --muted: #737373;
+      --muted-light: #a3a3a3;
+      --red: #ef4444;
+      --amber: #f59e0b;
+      --purple: #a78bfa;
+    }
+    body {
+      min-height: 100vh;
+      background: var(--bg);
+      color: var(--text);
+      font-family: "JetBrains Mono", "SFMono-Regular", Consolas, monospace;
+      font-size: 13px;
+    }
+    button, input, select { font: inherit; }
+    button { cursor: pointer; }
+    #auth {
+      min-height: 100vh;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 24px;
+    }
+    .auth-box {
+      width: min(380px, 100%);
+      border: 1px solid var(--border-strong);
+      background: var(--surface);
+      padding: 32px;
+    }
+    .eyebrow {
+      color: var(--green);
+      font-size: 9px;
+      letter-spacing: .18em;
+      text-transform: uppercase;
+      margin-bottom: 10px;
+    }
+    h1 { font-size: 19px; letter-spacing: .06em; text-transform: uppercase; }
+    .auth-copy { color: var(--muted); font-size: 10px; line-height: 1.6; margin: 10px 0 22px; }
+    input, select {
+      width: 100%;
+      background: var(--bg);
+      border: 1px solid var(--border-strong);
+      color: var(--text);
+      padding: 11px 12px;
+    }
+    input:focus, select:focus { outline: none; border-color: var(--green); }
+    .primary {
+      width: 100%;
+      border: 0;
+      background: var(--green);
+      color: var(--bg);
+      padding: 11px 16px;
+      margin-top: 10px;
+      font-size: 10px;
+      font-weight: 700;
+      letter-spacing: .12em;
+      text-transform: uppercase;
+    }
+    .error { color: var(--red); font-size: 10px; margin-top: 12px; min-height: 14px; }
+    #app { display: none; min-height: 100vh; }
+    #app.visible { display: flex; flex-direction: column; }
+    header {
+      min-height: 58px;
+      border-bottom: 1px solid var(--border);
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 20px;
+      padding: 0 28px;
+    }
+    .logo { color: var(--green); font-size: 13px; font-weight: 700; letter-spacing: .08em; }
+    .logo span { color: var(--muted); font-weight: 400; margin-left: 8px; }
+    #refresh { color: var(--muted); font-size: 9px; text-transform: uppercase; letter-spacing: .1em; }
+    nav { display: flex; border-bottom: 1px solid var(--border); padding: 0 28px; }
+    nav button {
+      width: auto;
+      border: 0;
+      border-bottom: 2px solid transparent;
+      background: transparent;
+      color: var(--muted);
+      padding: 13px 16px;
+      font-size: 9px;
+      letter-spacing: .15em;
+      text-transform: uppercase;
+    }
+    nav button:hover, nav button.active { color: var(--green); border-bottom-color: var(--green); }
+    main { flex: 1; padding: 28px; }
+    .loading { color: var(--muted); font-size: 10px; letter-spacing: .12em; text-transform: uppercase; }
+    .cards {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(170px, 1fr));
+      gap: 12px;
+      margin-bottom: 28px;
+    }
+    .card { border: 1px solid var(--border-strong); background: var(--surface); padding: 18px; }
+    .label { color: var(--muted); font-size: 9px; letter-spacing: .13em; text-transform: uppercase; }
+    .value { color: var(--text); font-size: 27px; font-weight: 700; margin-top: 9px; line-height: 1; }
+    .value.green { color: var(--green); }
+    .value.amber { color: var(--amber); }
+    .value.red { color: var(--red); }
+    .sub { color: var(--muted); font-size: 9px; margin-top: 7px; }
+    .section-title {
+      color: var(--green);
+      font-size: 9px;
+      letter-spacing: .15em;
+      text-transform: uppercase;
+      margin-bottom: 12px;
+    }
+    .plan-grid { display: flex; flex-wrap: wrap; gap: 10px; margin-bottom: 28px; }
+    .plan-cell {
+      min-width: 130px;
+      border: 1px solid var(--border);
+      background: var(--surface);
+      padding: 14px 20px;
+      text-align: center;
+    }
+    .plan-count { font-size: 21px; font-weight: 700; }
+    .plan-name { color: var(--muted); font-size: 8px; letter-spacing: .12em; text-transform: uppercase; margin-top: 5px; }
+    .chart {
+      height: 72px;
+      display: flex;
+      align-items: flex-end;
+      gap: 3px;
+      border-bottom: 1px solid var(--border-strong);
+    }
+    .bar { flex: 1; min-width: 3px; background: var(--green); opacity: .72; }
+    .filters { display: flex; align-items: center; flex-wrap: wrap; gap: 10px; margin-bottom: 14px; }
+    .filters label { color: var(--muted); font-size: 9px; letter-spacing: .1em; text-transform: uppercase; }
+    .filters select { width: auto; min-width: 150px; padding: 7px 9px; font-size: 10px; }
+    .count { color: var(--muted); font-size: 10px; }
+    .table-wrap { border: 1px solid var(--border-strong); overflow-x: auto; }
+    table { width: 100%; border-collapse: collapse; }
+    th {
+      background: var(--surface);
+      color: var(--muted);
+      padding: 10px 12px;
+      border-bottom: 1px solid var(--border-strong);
+      text-align: left;
+      font-size: 8px;
+      letter-spacing: .12em;
+      text-transform: uppercase;
+      white-space: nowrap;
+    }
+    td {
+      color: var(--muted-light);
+      padding: 11px 12px;
+      border-bottom: 1px solid var(--border);
+      font-size: 10px;
+      white-space: nowrap;
+    }
+    tbody tr:hover td { background: #0d0d0d; }
+    tbody tr { cursor: pointer; }
+    tbody tr:last-child td { border-bottom: 0; }
+    .tenant-name { color: var(--text); }
+    .badge {
+      display: inline-block;
+      border: 1px solid var(--border-strong);
+      padding: 2px 7px;
+      font-size: 8px;
+      letter-spacing: .1em;
+      text-transform: uppercase;
+    }
+    .badge.trial { color: var(--amber); border-color: rgba(245, 158, 11, .35); }
+    .badge.starter { color: var(--muted-light); }
+    .badge.professional { color: var(--green); border-color: rgba(16, 185, 129, .35); }
+    .badge.enterprise { color: var(--purple); border-color: rgba(167, 139, 250, .35); }
+    .badge.expired { color: var(--red); border-color: rgba(239, 68, 68, .35); }
+    .pagination { display: flex; align-items: center; gap: 9px; margin-top: 14px; color: var(--muted); font-size: 10px; }
+    .secondary {
+      width: auto;
+      border: 1px solid var(--border-strong);
+      background: transparent;
+      color: var(--muted-light);
+      padding: 6px 12px;
+      font-size: 9px;
+      letter-spacing: .08em;
+      text-transform: uppercase;
+    }
+    .secondary:disabled { opacity: .35; cursor: default; }
+    #detail {
+      position: fixed;
+      inset: 0 0 0 auto;
+      width: min(480px, 100%);
+      display: none;
+      overflow-y: auto;
+      z-index: 20;
+      border-left: 1px solid var(--border-strong);
+      background: var(--surface);
+      padding: 25px;
+      box-shadow: -20px 0 50px rgba(0, 0, 0, .4);
+    }
+    #detail.open { display: block; }
+    .close {
+      position: absolute;
+      top: 16px;
+      right: 16px;
+      width: 32px;
+      height: 32px;
+      border: 1px solid var(--border-strong);
+      background: transparent;
+      color: var(--muted-light);
+    }
+    #detail h2 { font-size: 15px; margin: 2px 48px 8px 0; }
+    .detail-section { color: var(--green); font-size: 8px; letter-spacing: .15em; text-transform: uppercase; margin: 22px 0 8px; }
+    .detail-row { display: flex; justify-content: space-between; gap: 20px; padding: 9px 0; border-bottom: 1px solid var(--border); font-size: 10px; }
+    .detail-key { color: var(--muted); }
+    .detail-value { color: var(--text); text-align: right; word-break: break-all; }
+    .plan-controls { display: flex; gap: 8px; align-items: center; }
+    .plan-controls select { margin: 0; padding: 7px 9px; }
+    .plan-controls button { flex: 0 0 auto; }
+    @media (max-width: 640px) {
+      header, nav, main { padding-left: 16px; padding-right: 16px; }
+      .logo span { display: none; }
+      nav { overflow-x: auto; }
+      nav button { padding-left: 10px; padding-right: 10px; }
+    }
+  </style>
+</head>
+<body>
+  <div id="auth">
+    <div class="auth-box">
+      <div class="eyebrow">Private operator access</div>
+      <h1>Eudora Admin</h1>
+      <p class="auth-copy">Enter the backend ADMIN_SECRET. This portal does not use customer authentication.</p>
+      <input id="keyInput" type="password" autocomplete="current-password" placeholder="Admin secret key">
+      <button class="primary" id="loginButton">Access Portal</button>
+      <div class="error" id="authError"></div>
+    </div>
+  </div>
+
+  <div id="app">
+    <header>
+      <div class="logo">EUDORA <span>OPERATOR PORTAL</span></div>
+      <div id="refresh"></div>
+    </header>
+    <nav>
+      <button data-tab="overview" class="active">Overview</button>
+      <button data-tab="tenants">Customers</button>
+      <button data-tab="revenue">Revenue</button>
+    </nav>
+    <main id="content"></main>
+  </div>
+
+  <aside id="detail">
+    <button class="close" id="closeDetail" aria-label="Close">x</button>
+    <div id="detailContent"></div>
+  </aside>
+
+  <script>
+    let adminKey = ""
+    let tenantOffset = 0
+    let tenantPlan = ""
+    const content = document.getElementById("content")
+
+    function escapeHtml(value) {
+      return String(value == null ? "" : value)
+        .replaceAll("&", "&amp;")
+        .replaceAll("<", "&lt;")
+        .replaceAll(">", "&gt;")
+        .replaceAll('"', "&quot;")
+        .replaceAll("'", "&#039;")
+    }
+
+    function number(value) {
+      return Number(value || 0).toLocaleString()
+    }
+
+    function date(value, includeTime) {
+      if (!value) return "-"
+      const parsed = new Date(value)
+      return includeTime ? parsed.toLocaleString() : parsed.toLocaleDateString()
+    }
+
+    async function api(path, options) {
+      const response = await fetch("/admin" + path, {
+        ...(options || {}),
+        headers: {
+          "x-admin-key": adminKey,
+          "Content-Type": "application/json",
+          ...((options && options.headers) || {})
+        }
+      })
+      if (!response.ok) {
+        const body = await response.json().catch(() => ({ error: "request_failed" }))
+        throw new Error(body.message || body.error || "Request failed")
+      }
+      return response.json()
+    }
+
+    async function login() {
+      adminKey = document.getElementById("keyInput").value.trim()
+      document.getElementById("authError").textContent = ""
+      try {
+        await api("/overview")
+        document.getElementById("auth").style.display = "none"
+        document.getElementById("app").classList.add("visible")
+        showTab("overview")
+      } catch {
+        adminKey = ""
+        document.getElementById("authError").textContent = "Invalid admin key"
+      }
+    }
+
+    function setLoading() {
+      content.innerHTML = '<div class="loading">Loading operator data...</div>'
+    }
+
+    function showTab(tab) {
+      document.querySelectorAll("nav button").forEach(button => {
+        button.classList.toggle("active", button.dataset.tab === tab)
+      })
+      setLoading()
+      if (tab === "overview") loadOverview()
+      if (tab === "tenants") loadTenants(0, "")
+      if (tab === "revenue") loadRevenue()
+    }
+
+    async function loadOverview() {
+      try {
+        const data = await api("/overview")
+        const plans = Object.fromEntries(data.plans.map(row => [row.plan, row.count]))
+        const paid = (plans.starter || 0) + (plans.professional || 0) + (plans.enterprise || 0)
+        const maximum = Math.max(...data.dailySignups.map(row => row.count), 1)
+        content.innerHTML = `
+          <div class="cards">
+            <div class="card"><div class="label">MRR</div><div class="value green">EUR ${number(data.mrr)}</div><div class="sub">EUR ${number(data.mrr * 12)} ARR</div></div>
+            <div class="card"><div class="label">Total Customers</div><div class="value">${number(data.totalTenants)}</div><div class="sub">${number(paid)} paid</div></div>
+            <div class="card"><div class="label">New (30d)</div><div class="value">${number(data.newLast30d)}</div><div class="sub">${number(data.newLast7d)} this week</div></div>
+            <div class="card"><div class="label">Active (30d)</div><div class="value">${number(data.activeLast30d)}</div><div class="sub">tenants with audit activity</div></div>
+            <div class="card"><div class="label">Trial Expiring</div><div class="value amber">${number(data.trialExpiringSoon)}</div><div class="sub">next 7 days</div></div>
+            <div class="card"><div class="label">Expired Trials</div><div class="value red">${number(data.expiredTrials)}</div><div class="sub">conversion opportunity</div></div>
+            <div class="card"><div class="label">Audit Events</div><div class="value">${number(data.totalAuditEvents)}</div><div class="sub">total platform</div></div>
+          </div>
+          <div class="section-title">Plan Distribution</div>
+          <div class="plan-grid">
+            ${["trial", "starter", "professional", "enterprise"].map(plan => `
+              <div class="plan-cell">
+                <div class="plan-count">${number(plans[plan])}</div>
+                <div class="plan-name">${plan}</div>
+              </div>
+            `).join("")}
+          </div>
+          <div class="section-title">Daily Signups (30d)</div>
+          <div class="chart">
+            ${data.dailySignups.map(row => `
+              <div class="bar" title="${escapeHtml(row.day)}: ${number(row.count)}" style="height:${Math.max(4, Math.round(row.count / maximum * 68))}px"></div>
+            `).join("")}
+          </div>
+        `
+        stampRefresh()
+      } catch (error) {
+        showError(error)
+      }
+    }
+
+    async function loadTenants(offset, plan) {
+      tenantOffset = offset
+      tenantPlan = plan
+      try {
+        const params = new URLSearchParams({
+          limit: "50",
+          offset: String(offset),
+          sort: "created_at",
+          order: "desc"
+        })
+        if (plan) params.set("plan", plan)
+        const data = await api("/tenants?" + params)
+        const now = Date.now()
+        content.innerHTML = `
+          <div class="filters">
+            <label for="planFilter">Filter</label>
+            <select id="planFilter">
+              <option value="">All plans</option>
+              ${["trial", "starter", "professional", "enterprise"].map(item => `
+                <option value="${item}" ${item === plan ? "selected" : ""}>${item}</option>
+              `).join("")}
+            </select>
+            <span class="count">${number(data.total)} customers</span>
+          </div>
+          <div class="table-wrap">
+            <table>
+              <thead><tr><th>Tenant</th><th>Owner</th><th>Plan</th><th>Agents</th><th>Events (30d)</th><th>Seats</th><th>Signed Up</th><th>Trial Ends</th></tr></thead>
+              <tbody>
+                ${data.tenants.map(tenant => {
+                  const expired = tenant.plan === "trial" && tenant.trial_ends_at && tenant.trial_ends_at < now
+                  return `
+                    <tr data-tenant-id="${escapeHtml(tenant.id)}">
+                      <td class="tenant-name">${escapeHtml(tenant.name || tenant.id.slice(0, 8))}</td>
+                      <td>${escapeHtml(tenant.owner_email || "-")}</td>
+                      <td><span class="badge ${expired ? "expired" : escapeHtml(tenant.plan)}">${expired ? "expired" : escapeHtml(tenant.plan)}</span></td>
+                      <td>${number(tenant.agent_count)}</td>
+                      <td>${number(tenant.events_30d)}</td>
+                      <td>${number(tenant.seat_count)}</td>
+                      <td>${date(tenant.created_at)}</td>
+                      <td>${date(tenant.trial_ends_at)}</td>
+                    </tr>
+                  `
+                }).join("")}
+              </tbody>
+            </table>
+          </div>
+          <div class="pagination">
+            <button class="secondary" id="previousPage" ${offset === 0 ? "disabled" : ""}>Previous</button>
+            <span>${data.total ? offset + 1 : 0}-${Math.min(offset + data.limit, data.total)} of ${data.total}</span>
+            <button class="secondary" id="nextPage" ${offset + data.limit >= data.total ? "disabled" : ""}>Next</button>
+          </div>
+        `
+        document.getElementById("planFilter").addEventListener("change", event => loadTenants(0, event.target.value))
+        document.getElementById("previousPage").addEventListener("click", () => loadTenants(Math.max(0, offset - data.limit), plan))
+        document.getElementById("nextPage").addEventListener("click", () => loadTenants(offset + data.limit, plan))
+        document.querySelectorAll("[data-tenant-id]").forEach(row => {
+          row.addEventListener("click", () => loadTenantDetail(row.dataset.tenantId))
+        })
+        stampRefresh()
+      } catch (error) {
+        showError(error)
+      }
+    }
+
+    async function loadTenantDetail(id) {
+      try {
+        const data = await api("/tenants/" + encodeURIComponent(id))
+        const tenant = data.tenant
+        const expired = tenant.plan === "trial" && tenant.trial_ends_at && tenant.trial_ends_at < Date.now()
+        document.getElementById("detailContent").innerHTML = `
+          <h2>${escapeHtml(tenant.name || tenant.id)}</h2>
+          <span class="badge ${expired ? "expired" : escapeHtml(tenant.plan)}">${expired ? "expired trial" : escapeHtml(tenant.plan)}</span>
+          <div class="detail-section">Tenant Info</div>
+          ${detailRow("ID", tenant.id)}
+          ${detailRow("Created", date(tenant.created_at, true))}
+          ${detailRow("Trial ends", date(tenant.trial_ends_at, true))}
+          ${detailRow("Stripe customer", tenant.stripe_customer_id || "None")}
+          <div class="detail-section">Usage</div>
+          ${detailRow("Total audit events", number(data.auditStats.total))}
+          ${detailRow("Events last 30d", number(data.auditStats.last30d))}
+          ${detailRow("Risk events", number(data.auditStats.risk_events))}
+          ${detailRow("DLP events", number(data.auditStats.dlp_events))}
+          ${detailRow("Blocked requests", number(data.auditStats.blocked))}
+          ${detailRow("Agents", number(data.agents.length))}
+          ${detailRow("Seats", number(data.users.length))}
+          <div class="detail-section">Team Members</div>
+          ${data.users.map(user => detailRow(user.role, user.email + (user.last_login ? " / " + date(user.last_login) : ""))).join("") || detailRow("Members", "None")}
+          <div class="detail-section">Change Plan</div>
+          <div class="plan-controls">
+            <select id="planSelect">
+              ${["trial", "starter", "professional", "enterprise"].map(plan => `<option value="${plan}" ${plan === tenant.plan ? "selected" : ""}>${plan}</option>`).join("")}
+            </select>
+            <button class="secondary" id="updatePlan">Update</button>
+          </div>
+          <div class="error" id="planError"></div>
+        `
+        document.getElementById("updatePlan").addEventListener("click", () => changePlan(id))
+        document.getElementById("detail").classList.add("open")
+      } catch (error) {
+        showError(error)
+      }
+    }
+
+    function detailRow(key, value) {
+      return `<div class="detail-row"><span class="detail-key">${escapeHtml(key)}</span><span class="detail-value">${escapeHtml(value)}</span></div>`
+    }
+
+    async function changePlan(id) {
+      const plan = document.getElementById("planSelect").value
+      try {
+        await api("/tenants/" + encodeURIComponent(id) + "/plan", {
+          method: "PATCH",
+          body: JSON.stringify({ plan })
+        })
+        await loadTenantDetail(id)
+        await loadTenants(tenantOffset, tenantPlan)
+      } catch (error) {
+        document.getElementById("planError").textContent = error.message
+      }
+    }
+
+    async function loadRevenue() {
+      try {
+        const data = await api("/revenue")
+        const prices = { starter: 99, professional: 399, enterprise: 999 }
+        content.innerHTML = `
+          <div class="cards">
+            <div class="card"><div class="label">MRR</div><div class="value green">EUR ${number(data.mrr)}</div></div>
+            <div class="card"><div class="label">ARR</div><div class="value green">EUR ${number(data.arr)}</div></div>
+            ${data.byPlan.map(row => `
+              <div class="card">
+                <div class="label">${escapeHtml(row.plan)}</div>
+                <div class="value">${number(row.count)}</div>
+                <div class="sub">EUR ${number(prices[row.plan] * row.count)}/mo</div>
+              </div>
+            `).join("")}
+          </div>
+          <div class="section-title">Monthly Paid Signups</div>
+          <div class="table-wrap">
+            <table>
+              <thead><tr><th>Month</th><th>Plan</th><th>New Customers</th><th>Revenue Added</th></tr></thead>
+              <tbody>
+                ${data.monthlyPaid.map(row => `
+                  <tr>
+                    <td>${escapeHtml(row.month)}</td>
+                    <td><span class="badge ${escapeHtml(row.plan)}">${escapeHtml(row.plan)}</span></td>
+                    <td>${number(row.count)}</td>
+                    <td style="color:var(--green)">EUR ${number((prices[row.plan] || 0) * row.count)}/mo</td>
+                  </tr>
+                `).join("")}
+              </tbody>
+            </table>
+          </div>
+        `
+        stampRefresh()
+      } catch (error) {
+        showError(error)
+      }
+    }
+
+    function showError(error) {
+      content.innerHTML = `<div class="error">${escapeHtml(error.message || "Failed to load data")}</div>`
+    }
+
+    function stampRefresh() {
+      document.getElementById("refresh").textContent = "Refreshed " + new Date().toLocaleTimeString()
+    }
+
+    document.getElementById("loginButton").addEventListener("click", login)
+    document.getElementById("keyInput").addEventListener("keydown", event => {
+      if (event.key === "Enter") login()
+    })
+    document.getElementById("closeDetail").addEventListener("click", () => {
+      document.getElementById("detail").classList.remove("open")
+    })
+    document.querySelectorAll("nav button").forEach(button => {
+      button.addEventListener("click", () => showTab(button.dataset.tab))
+    })
+
+    const keyFromUrl = new URLSearchParams(window.location.search).get("key")
+    if (keyFromUrl) {
+      document.getElementById("keyInput").value = keyFromUrl
+      login()
+    }
+  </script>
+</body>
+</html>
