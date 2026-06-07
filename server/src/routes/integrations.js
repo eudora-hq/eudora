@@ -1,5 +1,9 @@
 import { nanoid } from 'nanoid'
 import { testConnection, pullAuditLogs } from '../integrations/azureOpenAI.js'
+import {
+  testGithubConnection,
+  pullCopilotAuditLogs,
+} from '../integrations/githubCopilot.js'
 import { encrypt, decrypt } from '../utils/encryption.js'
 import { createNotification } from '../utils/notify.js'
 
@@ -14,6 +18,12 @@ const REQUIRED_AZURE_FIELDS = [
 
 function hasRequiredAzureConfig(config) {
   return REQUIRED_AZURE_FIELDS.every(field => (
+    typeof config?.[field] === 'string' && config[field].trim()
+  ))
+}
+
+function hasRequiredGithubConfig(config) {
+  return ['org', 'token'].every(field => (
     typeof config?.[field] === 'string' && config[field].trim()
   ))
 }
@@ -42,12 +52,12 @@ function decodeConfig(storedConfig) {
   return encoded
 }
 
-function auditAction(operation) {
+function auditAction(source, operation) {
   const normalized = String(operation || 'request')
     .toLowerCase()
     .replace(/[^a-z0-9]+/g, '_')
     .replace(/^_+|_+$/g, '')
-  return `azure_openai_${normalized || 'request'}`
+  return `${source}_${normalized || 'request'}`
 }
 
 export default async function integrationsRoutes(fastify) {
@@ -118,6 +128,60 @@ export default async function integrationsRoutes(fastify) {
     })
   })
 
+  fastify.post('/github-copilot/test', async (request, reply) => {
+    if (!requireIntegrationAdmin(request, reply)) return
+
+    const { config } = request.body || {}
+    if (!hasRequiredGithubConfig(config)) {
+      return reply.code(400).send({
+        error: 'missing_config',
+        message: 'Required fields: org, token',
+      })
+    }
+
+    return reply.send(await testGithubConnection(config))
+  })
+
+  fastify.post('/github-copilot', async (request, reply) => {
+    if (!requireIntegrationAdmin(request, reply)) return
+
+    const { name, config } = request.body || {}
+    if (!name?.trim() || !hasRequiredGithubConfig(config)) {
+      return reply.code(400).send({ error: 'missing_fields' })
+    }
+
+    const connection = await testGithubConnection(config)
+    if (!connection.success) {
+      return reply.code(400).send({
+        error: 'connection_failed',
+        message: connection.error,
+      })
+    }
+
+    const id = nanoid()
+    const createdAt = Date.now()
+    db.prepare(`
+      INSERT INTO integrations (
+        id, tenant_id, type, name, config, status, created_at
+      )
+      VALUES (?, ?, 'github_copilot', ?, ?, 'active', ?)
+    `).run(
+      id,
+      request.tenantId,
+      name.trim(),
+      encodeConfig(config),
+      createdAt
+    )
+
+    return reply.code(201).send({
+      id,
+      name: name.trim(),
+      type: 'github_copilot',
+      status: 'active',
+      created_at: createdAt,
+    })
+  })
+
   fastify.post('/:id/sync', async (request, reply) => {
     if (!requireIntegrationAdmin(request, reply)) return
 
@@ -127,7 +191,7 @@ export default async function integrationsRoutes(fastify) {
       WHERE id = ? AND tenant_id = ?
     `).get(request.params.id, request.tenantId)
     if (!integration) return reply.code(404).send({ error: 'not_found' })
-    if (integration.type !== 'azure_openai') {
+    if (!['azure_openai', 'github_copilot'].includes(integration.type)) {
       return reply.code(400).send({ error: 'unsupported_integration' })
     }
 
@@ -144,7 +208,10 @@ export default async function integrationsRoutes(fastify) {
     const since = integration.last_sync_at || Date.now() - 24 * 60 * 60 * 1000
 
     try {
-      const events = await pullAuditLogs(config, since)
+      const source = integration.type
+      const events = source === 'github_copilot'
+        ? await pullCopilotAuditLogs(config, since)
+        : await pullAuditLogs(config, since)
       const insertAudit = db.prepare(`
         INSERT INTO audit_log (
           id, tenant_id, user_id, action, risk_score, metadata,
@@ -160,9 +227,9 @@ export default async function integrationsRoutes(fastify) {
             nanoid(),
             request.tenantId,
             request.user.userId,
-            auditAction(event.operation),
+            auditAction(source, event.operation || event.action),
             JSON.stringify({
-              source: 'azure_openai',
+              source,
               integrationId: integration.id,
               integrationName: integration.name,
               ...event,
@@ -183,10 +250,13 @@ export default async function integrationsRoutes(fastify) {
       `).run(syncedAt, imported, integration.id, request.tenantId)
 
       if (imported > 0) {
+        const providerName = source === 'github_copilot'
+          ? 'GitHub Copilot'
+          : 'Azure OpenAI'
         createNotification(db, {
           tenantId: request.tenantId,
           type: 'integration_sync',
-          title: 'Azure OpenAI sync complete',
+          title: `${providerName} sync complete`,
           message: `Imported ${imported} events from "${integration.name}"`,
           actionUrl: '/audit',
         })

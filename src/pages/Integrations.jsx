@@ -1,6 +1,20 @@
 import { useEffect, useState } from 'react'
 import api from '../api/client'
 import AzureOpenAI from './integrations/AzureOpenAI'
+import GithubCopilot from './integrations/GithubCopilot'
+
+const PROVIDERS = {
+  azure_openai: {
+    label: 'Azure OpenAI',
+    icon: 'cloud_sync',
+    empty: 'Connect Azure OpenAI to import Azure Monitor activity without changing agent traffic.',
+  },
+  github_copilot: {
+    label: 'GitHub Copilot',
+    icon: 'code',
+    empty: 'Connect Copilot Business to import organization audit events from GitHub.',
+  },
+}
 
 function formatDate(timestamp) {
   return timestamp ? new Date(timestamp).toLocaleString() : 'Never'
@@ -9,7 +23,8 @@ function formatDate(timestamp) {
 export default function Integrations() {
   const [integrations, setIntegrations] = useState([])
   const [loading, setLoading] = useState(true)
-  const [showAzureForm, setShowAzureForm] = useState(false)
+  const [activeTab, setActiveTab] = useState('azure_openai')
+  const [showForm, setShowForm] = useState(false)
   const [syncingId, setSyncingId] = useState(null)
   const [error, setError] = useState('')
   const [message, setMessage] = useState('')
@@ -31,8 +46,8 @@ export default function Integrations() {
   }, [])
 
   const handleSaved = async () => {
-    setShowAzureForm(false)
-    setMessage('Azure OpenAI integration connected.')
+    setShowForm(false)
+    setMessage(`${PROVIDERS[activeTab].label} integration connected.`)
     await loadIntegrations()
   }
 
@@ -42,10 +57,10 @@ export default function Integrations() {
     setMessage('')
     try {
       const response = await api.post(`/integrations/${integration.id}/sync`)
-      setMessage(`Imported ${response.data.imported} Azure OpenAI audit event${response.data.imported === 1 ? '' : 's'}.`)
+      setMessage(`Imported ${response.data.imported} ${PROVIDERS[integration.type]?.label || 'provider'} audit event${response.data.imported === 1 ? '' : 's'}.`)
       await loadIntegrations()
     } catch (err) {
-      setError(err.response?.data?.message || 'Azure OpenAI sync failed')
+      setError(err.response?.data?.message || `${PROVIDERS[integration.type]?.label || 'Integration'} sync failed`)
       await loadIntegrations()
     } finally {
       setSyncingId(null)
@@ -65,6 +80,9 @@ export default function Integrations() {
     }
   }
 
+  const visibleIntegrations = integrations.filter(integration => integration.type === activeTab)
+  const activeProvider = PROVIDERS[activeTab]
+
   return (
     <div className="p-6 md:p-8 max-w-5xl space-y-6">
       <div className="flex flex-col sm:flex-row sm:items-end sm:justify-between gap-4">
@@ -74,21 +92,37 @@ export default function Integrations() {
             Import provider-native activity into the Eudora audit trail.
           </p>
         </div>
-        {!showAzureForm && (
+        {!showForm && (
           <button
             type="button"
-            onClick={() => { setShowAzureForm(true); setError(''); setMessage('') }}
+            onClick={() => { setShowForm(true); setError(''); setMessage('') }}
             className="bg-primary text-[#050505] px-5 py-2.5 font-mono text-[10px] font-bold uppercase tracking-widest cursor-pointer hover:bg-primary/90 transition-colors"
           >
-            Connect Azure OpenAI
+            Connect {activeProvider.label}
           </button>
         )}
       </div>
 
       <div className="flex border-b border-[#262626]">
-        <div className="border-b border-primary px-4 py-3 font-mono text-[10px] text-primary uppercase tracking-widest">
-          Azure OpenAI
-        </div>
+        {Object.entries(PROVIDERS).map(([id, provider]) => (
+          <button
+            key={id}
+            type="button"
+            onClick={() => {
+              setActiveTab(id)
+              setShowForm(false)
+              setError('')
+              setMessage('')
+            }}
+            className={`px-4 py-3 font-mono text-[10px] uppercase tracking-widest cursor-pointer transition-colors ${
+              activeTab === id
+                ? 'border-b border-primary text-primary'
+                : 'text-text-muted hover:text-white'
+            }`}
+          >
+            {provider.label}
+          </button>
+        ))}
       </div>
 
       {error && (
@@ -102,10 +136,16 @@ export default function Integrations() {
         </div>
       )}
 
-      {showAzureForm && (
+      {showForm && activeTab === 'azure_openai' && (
         <AzureOpenAI
           onSaved={handleSaved}
-          onCancel={() => setShowAzureForm(false)}
+          onCancel={() => setShowForm(false)}
+        />
+      )}
+      {showForm && activeTab === 'github_copilot' && (
+        <GithubCopilot
+          onSaved={handleSaved}
+          onCancel={() => setShowForm(false)}
         />
       )}
 
@@ -114,23 +154,27 @@ export default function Integrations() {
           <div className="border border-[#262626] px-5 py-8 text-center">
             <p className="font-mono text-[10px] text-text-muted uppercase tracking-widest">Loading integrations...</p>
           </div>
-        ) : integrations.length === 0 ? (
+        ) : visibleIntegrations.length === 0 ? (
           <div className="border border-[#262626] bg-[#0a0a0a] px-5 py-8 text-center">
-            <span className="material-symbols-outlined text-text-muted text-[28px]">cloud_off</span>
+            <span className="material-symbols-outlined text-text-muted text-[28px]">{activeProvider.icon}</span>
             <p className="font-mono text-[11px] text-white uppercase tracking-widest mt-3">No integrations connected</p>
             <p className="font-mono text-[9px] text-text-muted mt-2">
-              Connect Azure OpenAI to import Azure Monitor activity without changing agent traffic.
+              {activeProvider.empty}
             </p>
           </div>
-        ) : integrations.map(integration => {
+        ) : visibleIntegrations.map(integration => {
           const failed = integration.last_sync_status?.startsWith('failed')
+          const provider = PROVIDERS[integration.type] || activeProvider
           return (
             <div key={integration.id} className="border border-[#262626] bg-[#0a0a0a] p-5">
               <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-4">
                 <div className="min-w-0">
                   <div className="flex items-center gap-3">
-                    <span className="material-symbols-outlined text-primary text-[18px]">cloud_sync</span>
+                    <span className="material-symbols-outlined text-primary text-[18px]">{provider.icon}</span>
                     <h2 className="font-mono text-[12px] font-bold text-white truncate">{integration.name}</h2>
+                    <span className="font-mono text-[8px] text-text-muted uppercase tracking-widest">
+                      {provider.label}
+                    </span>
                     <span className="border border-primary/30 bg-primary/5 px-2 py-0.5 font-mono text-[8px] text-primary uppercase tracking-widest">
                       Active
                     </span>
