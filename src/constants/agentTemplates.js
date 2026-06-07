@@ -657,6 +657,85 @@ Format as a structured regulatory change alert.`,
     edges: [{ source: 'n1', target: 'n2' }],
   },
   {
+    id: 'eba-monitor',
+    name: 'EBA Regulatory Monitor',
+    category: 'compliance',
+    description: 'Monitors the European Banking Authority feed for new publications and assesses DORA impact.',
+    badge: 'REGULATORY',
+    nodes: [
+      {
+        id: 'n1',
+        type: 'fetch_rss',
+        label: 'Fetch EBA Feed',
+        config: {
+          url: 'https://www.eba.europa.eu/rss.xml',
+          maxItems: '10',
+        },
+      },
+      {
+        id: 'n2',
+        type: 'agent',
+        label: 'DORA Impact Analyst',
+        systemPrompt: `You are a regulatory analyst specialising in EU financial regulation. Given a list of recent EBA publications, identify:
+
+1. Any publications directly relevant to DORA (Digital Operational Resilience Act)
+2. Publications affecting ICT risk management
+3. Publications affecting third-party risk
+4. Any urgent deadlines or compliance dates
+
+For each relevant item, assess: HIGH / MEDIUM / LOW impact and explain why.
+If nothing is DORA-relevant, state that clearly.
+
+Format as a structured regulatory alert.`,
+      },
+    ],
+    edges: [{ source: 'n1', target: 'n2' }],
+  },
+  {
+    id: 'multi-regulator-monitor',
+    name: 'Multi-Regulator Compliance Monitor',
+    category: 'compliance',
+    description: 'Monitors EBA, ECB, and ESMA feeds simultaneously for compliance-relevant publications.',
+    badge: 'REGULATORY',
+    nodes: [
+      {
+        id: 'n1',
+        type: 'fetch_rss',
+        label: 'EBA Feed',
+        config: {
+          url: 'https://www.eba.europa.eu/rss.xml',
+          maxItems: '5',
+        },
+      },
+      {
+        id: 'n2',
+        type: 'fetch_rss',
+        label: 'ECB Feed',
+        config: {
+          url: 'https://www.ecb.europa.eu/rss/news.rss',
+          maxItems: '5',
+        },
+      },
+      {
+        id: 'n3',
+        type: 'agent',
+        label: 'Compliance Analyst',
+        systemPrompt: `You are a compliance analyst. Given publications from multiple EU regulatory bodies, produce a combined weekly regulatory briefing covering:
+
+1. New guidance or consultations
+2. DORA-relevant updates
+3. Key deadlines
+4. Priority actions for compliance teams
+
+Be concise. Mark each item with the source (EBA/ECB/ESMA).`,
+      },
+    ],
+    edges: [
+      { source: 'n1', target: 'n3' },
+      { source: 'n2', target: 'n3' },
+    ],
+  },
+  {
     id: 'risk-research',
     name: 'Risk Research Assistant',
     category: 'compliance',

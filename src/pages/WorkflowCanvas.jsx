@@ -45,6 +45,16 @@ const NODE_DEFINITIONS = {
       body: { type: 'textarea', label: 'Request Body (JSON)', placeholder: '{"key": "value"}' },
     },
   },
+  fetch_rss: {
+    label: 'RSS Feed',
+    icon: 'rss_feed',
+    description: 'Monitor RSS/Atom feeds - EBA, ECB, FCA, ESMA, news sources',
+    color: 'border-amber-500/40 bg-amber-500/5',
+    config: {
+      url: { type: 'text', label: 'RSS/Atom Feed URL', placeholder: 'https://www.eba.europa.eu/rss.xml' },
+      maxItems: { type: 'select', label: 'Max articles to fetch', options: ['5', '10', '20', '50'], default: '10' },
+    },
+  },
   webhook_out: {
     label: 'Webhook Out',
     icon: 'webhook',
@@ -159,6 +169,30 @@ function FetchApiNode({ data, selected }) {
   );
 }
 
+function FetchRssNode({ data, selected }) {
+  return (
+    <div className={`w-[240px] border bg-[#0a0a0a] p-4 transition-colors ${selected ? 'border-amber-400' : 'border-amber-500/40'}`}>
+      <Handle type="target" position={Position.Left} className="!w-3 !h-3 !bg-amber-400 !border-[#050505]" />
+      <div className="flex items-start justify-between gap-3 mb-3">
+        <div className="flex items-center gap-2 min-w-0">
+          <span className="material-symbols-outlined text-amber-400 text-[18px]">rss_feed</span>
+          <h3 className="font-mono text-[12px] text-white uppercase font-bold tracking-widest leading-tight">{data.label || 'RSS FEED'}</h3>
+        </div>
+        <span className="border border-amber-500/40 bg-amber-500/10 px-2 py-1 font-mono text-[8px] text-amber-400 uppercase tracking-widest shrink-0">
+          {data.config?.maxItems || '10'} ITEMS
+        </span>
+      </div>
+      <p
+        className="font-mono text-[10px] text-text-muted leading-relaxed overflow-hidden"
+        style={{ display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical' }}
+      >
+        {data.config?.url || 'Uses incoming text as the RSS or Atom feed URL.'}
+      </p>
+      <Handle type="source" position={Position.Right} className="!w-3 !h-3 !bg-amber-400 !border-[#050505]" />
+    </div>
+  );
+}
+
 function WebhookOutNode({ data, selected }) {
   return (
     <div className={`w-[240px] border bg-[#0a0a0a] p-4 transition-colors ${selected ? 'border-orange-400' : 'border-orange-500/40'}`}>
@@ -209,6 +243,7 @@ const nodeTypes = {
   agent: AgentNode,
   fetch_url: FetchUrlNode,
   fetch_api: FetchApiNode,
+  fetch_rss: FetchRssNode,
   webhook_out: WebhookOutNode,
   send_email: SendEmailNode,
 };
@@ -692,6 +727,17 @@ function WorkflowEditor({ workflowId }) {
               </div>
               <div
                 draggable
+                onDragStart={(event) => onUtilityDragStart(event, 'fetch_rss')}
+                className="border border-amber-500/40 bg-amber-500/5 p-3 cursor-grab active:cursor-grabbing hover:border-amber-400 transition-colors"
+              >
+                <div className="flex items-center gap-2 mb-2">
+                  <span className="material-symbols-outlined text-amber-400 text-[16px]">rss_feed</span>
+                  <div className="font-mono text-[11px] text-white uppercase font-bold tracking-widest leading-tight">RSS Feed</div>
+                </div>
+                <p className="font-mono text-[9px] text-text-muted leading-relaxed">Monitors RSS and Atom feeds for new articles.</p>
+              </div>
+              <div
+                draggable
                 onDragStart={(event) => onUtilityDragStart(event, 'webhook_out')}
                 className="border border-orange-500/40 bg-orange-500/5 p-3 cursor-grab active:cursor-grabbing hover:border-orange-400 transition-colors"
               >
@@ -807,6 +853,22 @@ function WorkflowEditor({ workflowId }) {
                         onChange={(value) => updateNodeConfig('body', value)}
                       />
                     )}
+                  </div>
+                )}
+
+                {selectedNode.type === 'fetch_rss' && (
+                  <div className="space-y-4">
+                    <ConfigInput
+                      field={NODE_DEFINITIONS.fetch_rss.config.url}
+                      value={selectedNode.data.config?.url || ''}
+                      onChange={(value) => updateNodeConfig('url', value)}
+                    />
+                    <ConfigInput
+                      field={NODE_DEFINITIONS.fetch_rss.config.maxItems}
+                      value={selectedNode.data.config?.maxItems || '10'}
+                      onChange={(value) => updateNodeConfig('maxItems', value)}
+                    />
+                    <p className="font-mono text-[9px] text-text-muted/70 leading-relaxed">Leave the URL empty to use the previous node output.</p>
                   </div>
                 )}
 
@@ -1017,7 +1079,7 @@ function ConfigInput({ field, value, onChange }) {
 }
 
 function toFlowNode(node, agentById) {
-  if (node.type === 'fetch_url' || node.type === 'fetch_api' || node.type === 'webhook_out' || node.type === 'send_email') {
+  if (node.type === 'fetch_url' || node.type === 'fetch_api' || node.type === 'fetch_rss' || node.type === 'webhook_out' || node.type === 'send_email') {
     const definition = NODE_DEFINITIONS[node.type];
     return {
       id: node.id,
@@ -1044,7 +1106,7 @@ function toFlowNode(node, agentById) {
 }
 
 function fromFlowNode(node) {
-  if (node.type === 'fetch_url' || node.type === 'fetch_api' || node.type === 'webhook_out' || node.type === 'send_email') {
+  if (node.type === 'fetch_url' || node.type === 'fetch_api' || node.type === 'fetch_rss' || node.type === 'webhook_out' || node.type === 'send_email') {
     const definition = NODE_DEFINITIONS[node.type];
     return {
       id: node.id,
@@ -1116,7 +1178,7 @@ function buildWorkflowTemplatePayload(template, agents) {
     name: template.name.toUpperCase(),
     description: template.description,
     nodes: template.nodes.map((node) => {
-      if (node.type === 'fetch_url' || node.type === 'fetch_api' || node.type === 'webhook_out' || node.type === 'send_email') {
+      if (node.type === 'fetch_url' || node.type === 'fetch_api' || node.type === 'fetch_rss' || node.type === 'webhook_out' || node.type === 'send_email') {
         return {
           id: node.id,
           type: node.type,

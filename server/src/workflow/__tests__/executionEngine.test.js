@@ -545,6 +545,145 @@ describe('fetch_api node', () => {
   })
 })
 
+describe('fetch_rss node', () => {
+  function createRssWorkflow(config, description = 'https://example.com/feed.xml') {
+    createCustomWorkflow({
+      nodes: [
+        {
+          id: 'rss1',
+          type: 'fetch_rss',
+          label: 'RSS Feed',
+          config,
+          position: { x: 0, y: 0 },
+        },
+      ],
+      edges: [],
+      description,
+    })
+  }
+
+  it('parses RSS feed and returns formatted articles', async () => {
+    const rssXml = `<?xml version="1.0"?>
+      <rss version="2.0"><channel>
+        <item><title>DORA Update</title><link>https://eba.eu/1</link><pubDate>Mon, 06 Jun 2026</pubDate><description>New guidance</description></item>
+        <item><title>ICT Risk Framework</title><link>https://eba.eu/2</link><pubDate>Sun, 05 Jun 2026</pubDate><description>Updated framework</description></item>
+      </channel></rss>`
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValueOnce({
+      ok: true,
+      status: 200,
+      text: async () => rssXml,
+    }))
+    createRssWorkflow({ url: 'https://www.eba.europa.eu/rss.xml', maxItems: '10' })
+
+    await executeWorkflow(workflowId, tenantId, db, runId)
+
+    const result = latestResults()[0]
+    expect(result.status).toBe('success')
+    expect(result.output).toContain('DORA Update')
+    expect(result.output).toContain('ICT Risk Framework')
+    expect(result.output).toContain('https://eba.eu/1')
+    expect(log).toHaveBeenCalledWith(
+      expect.objectContaining({
+        action: 'rss_fetched',
+        metadata: expect.objectContaining({
+          url: 'https://www.eba.europa.eu/rss.xml',
+          itemCount: 2,
+          workflowId,
+        }),
+      }),
+      db
+    )
+  })
+
+  it('parses Atom feed correctly', async () => {
+    const atomXml = `<?xml version="1.0"?>
+      <feed xmlns="http://www.w3.org/2005/Atom">
+        <entry><title>Atom Entry</title><link href="https://example.com/1"/><published>2026-06-06</published><summary>Summary text</summary></entry>
+      </feed>`
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValueOnce({
+      ok: true,
+      status: 200,
+      text: async () => atomXml,
+    }))
+    createRssWorkflow({ url: 'https://example.com/atom.xml' })
+
+    await executeWorkflow(workflowId, tenantId, db, runId)
+
+    expect(latestResults()[0]).toMatchObject({
+      status: 'success',
+      output: expect.stringContaining('Atom Entry'),
+    })
+    expect(latestResults()[0].output).toContain('https://example.com/1')
+    expect(latestResults()[0].output).toContain('Summary text')
+  })
+
+  it('maxItems limits output', async () => {
+    const items = Array.from({ length: 20 }, (_, index) => (
+      `<item><title>Article ${index + 1}</title><link>https://example.com/${index + 1}</link></item>`
+    )).join('')
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValueOnce({
+      ok: true,
+      status: 200,
+      text: async () => `<rss><channel>${items}</channel></rss>`,
+    }))
+    createRssWorkflow({ url: 'https://example.com/rss.xml', maxItems: '3' })
+
+    await executeWorkflow(workflowId, tenantId, db, runId)
+
+    const output = latestResults()[0].output
+    expect(output.match(/^\d+\. Article/gm)).toHaveLength(3)
+    expect(output).toContain('Article 3')
+    expect(output).not.toContain('Article 4')
+  })
+
+  it('empty feed returns failed', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValueOnce({
+      ok: true,
+      status: 200,
+      text: async () => '<rss><channel></channel></rss>',
+    }))
+    createRssWorkflow({ url: 'https://example.com/empty.xml' })
+
+    await executeWorkflow(workflowId, tenantId, db, runId)
+
+    expect(latestResults()[0]).toMatchObject({
+      status: 'failed',
+      error: 'empty_feed',
+      output: 'No items found in feed',
+    })
+  })
+
+  it('timeout returns failed', async () => {
+    const timeoutError = new Error('abort')
+    timeoutError.name = 'AbortError'
+    vi.stubGlobal('fetch', vi.fn().mockRejectedValueOnce(timeoutError))
+    createRssWorkflow({ url: 'https://example.com/slow.xml' })
+
+    await executeWorkflow(workflowId, tenantId, db, runId)
+
+    expect(latestResults()[0]).toMatchObject({
+      status: 'failed',
+      error: 'timeout',
+      output: 'Feed fetch timed out',
+    })
+  })
+
+  it('invalid URL returns failed without fetching', async () => {
+    const fetchMock = vi.fn()
+    vi.stubGlobal('fetch', fetchMock)
+    createRssWorkflow({ url: 'not-a-url' })
+
+    await executeWorkflow(workflowId, tenantId, db, runId)
+
+    expect(latestResults()[0]).toMatchObject({
+      status: 'failed',
+      error: 'invalid_url',
+      output: 'Invalid RSS URL',
+    })
+    expect(fetchMock).not.toHaveBeenCalled()
+  })
+})
+
 describe('webhook_out node', () => {
   function createWebhookWorkflow(config, description = 'workflow result') {
     createCustomWorkflow({

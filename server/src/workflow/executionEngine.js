@@ -167,6 +167,10 @@ async function executeNode(node, input, tenantId, db, context = {}) {
     return executeFetchApiNode(node, input, tenantId, db, context, startedAt)
   }
 
+  if (node.type === 'fetch_rss') {
+    return executeFetchRssNode(node, input, tenantId, db, context, startedAt)
+  }
+
   if (node.type === 'webhook_out') {
     return executeWebhookOutNode(node, input, tenantId, db, context, startedAt)
   }
@@ -362,6 +366,167 @@ function resolveFetchUrl(node, input) {
 
   const urls = raw.match(/https?:\/\/[^\s"',\]]+/g) || []
   return urls[preferredIndex] || urls[0] || raw
+}
+
+async function executeFetchRssNode(node, input, tenantId, db, context, startedAt) {
+  const config = node.config || {}
+  const url = config.url || input
+
+  if (!url || (!String(url).startsWith('http://') && !String(url).startsWith('https://'))) {
+    return {
+      nodeId: node.id,
+      agentId: null,
+      output: 'Invalid RSS URL',
+      tokensUsed: 0,
+      durationMs: Date.now() - startedAt,
+      status: 'failed',
+      error: 'invalid_url',
+    }
+  }
+
+  const requestedMaxItems = Number.parseInt(config.maxItems, 10) || 10
+  const maxItems = Math.max(1, Math.min(requestedMaxItems, 50))
+  let timeout
+
+  try {
+    const controller = new AbortController()
+    timeout = setTimeout(() => controller.abort(), 10000)
+
+    const response = await fetch(url, {
+      signal: controller.signal,
+      headers: {
+        Accept: 'application/rss+xml, application/atom+xml, application/xml, text/xml, */*',
+        'User-Agent': 'Eudora-RSS-Monitor/1.0',
+      },
+    })
+
+    if (!response.ok) {
+      return {
+        nodeId: node.id,
+        agentId: null,
+        output: `HTTP ${response.status}`,
+        tokensUsed: 0,
+        durationMs: Date.now() - startedAt,
+        status: 'failed',
+        error: 'fetch_failed',
+      }
+    }
+
+    const xmlText = await response.text()
+    const items = parseFeedItems(xmlText, maxItems)
+
+    if (items.length === 0) {
+      return {
+        nodeId: node.id,
+        agentId: null,
+        output: 'No items found in feed',
+        tokensUsed: 0,
+        durationMs: Date.now() - startedAt,
+        status: 'failed',
+        error: 'empty_feed',
+      }
+    }
+
+    const output = items.map((item, index) => (
+      `${index + 1}. ${item.title}\n` +
+      `   ${item.published || 'No date'}\n` +
+      `   ${item.link || 'No link'}\n` +
+      `   ${item.summary || 'No summary'}`
+    )).join('\n\n')
+
+    log({
+      tenantId,
+      userId: null,
+      action: 'rss_fetched',
+      riskScore: 0,
+      metadata: {
+        url,
+        itemCount: items.length,
+        workflowId: context.workflowId,
+      },
+    }, db)
+
+    return {
+      nodeId: node.id,
+      agentId: null,
+      output,
+      tokensUsed: 0,
+      durationMs: Date.now() - startedAt,
+      status: 'success',
+    }
+  } catch (err) {
+    return {
+      nodeId: node.id,
+      agentId: null,
+      output: err.name === 'AbortError' ? 'Feed fetch timed out' : err.message,
+      tokensUsed: 0,
+      durationMs: Date.now() - startedAt,
+      status: 'failed',
+      error: err.name === 'AbortError' ? 'timeout' : 'fetch_error',
+    }
+  } finally {
+    if (timeout) clearTimeout(timeout)
+  }
+}
+
+function parseFeedItems(xmlText, maxItems) {
+  const items = []
+  const isAtom = /<feed\b/i.test(xmlText)
+  const entryPattern = isAtom
+    ? /<entry\b[^>]*>([\s\S]*?)<\/entry>/gi
+    : /<item\b[^>]*>([\s\S]*?)<\/item>/gi
+
+  for (const match of xmlText.matchAll(entryPattern)) {
+    if (items.length >= maxItems) break
+
+    const entry = match[1]
+    const title = extractXmlText(entry, 'title')
+    if (!title) continue
+
+    const link = isAtom
+      ? entry.match(/<link\b[^>]*href=(?:"([^"]+)"|'([^']+)')[^>]*\/?>/i)?.slice(1).find(Boolean)
+        || extractXmlText(entry, 'link')
+      : extractXmlText(entry, 'link') || extractXmlText(entry, 'guid')
+    const published = isAtom
+      ? extractXmlText(entry, 'published') || extractXmlText(entry, 'updated')
+      : extractXmlText(entry, 'pubDate')
+    const summary = isAtom
+      ? extractXmlText(entry, 'summary') || extractXmlText(entry, 'content')
+      : extractXmlText(entry, 'description')
+
+    items.push({
+      title,
+      link,
+      published,
+      summary: summary ? summary.substring(0, 300) : undefined,
+    })
+  }
+
+  return items
+}
+
+function extractXmlText(xml, tagName) {
+  const match = xml.match(new RegExp(`<${tagName}\\b[^>]*>([\\s\\S]*?)<\\/${tagName}>`, 'i'))
+  if (!match) return undefined
+
+  return decodeXmlEntities(
+    match[1]
+      .replace(/<!\[CDATA\[([\s\S]*?)\]\]>/gi, '$1')
+      .replace(/<[^>]+>/g, ' ')
+      .replace(/\s+/g, ' ')
+      .trim()
+  ) || undefined
+}
+
+function decodeXmlEntities(value) {
+  return value
+    .replaceAll('&amp;', '&')
+    .replaceAll('&lt;', '<')
+    .replaceAll('&gt;', '>')
+    .replaceAll('&quot;', '"')
+    .replaceAll('&apos;', "'")
+    .replace(/&#(\d+);/g, (_, code) => String.fromCodePoint(Number(code)))
+    .replace(/&#x([0-9a-f]+);/gi, (_, code) => String.fromCodePoint(Number.parseInt(code, 16)))
 }
 
 async function executeFetchApiNode(node, input, tenantId, db, context, startedAt) {
