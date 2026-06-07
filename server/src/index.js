@@ -76,6 +76,10 @@ async function start() {
     'POST /auth/reset-password',
     'POST /auth/accept-invite',
     'POST /auth/refresh',
+    'GET /auth/oauth/google',
+    'GET /auth/callback/google',
+    'GET /auth/oauth/github',
+    'GET /auth/callback/github',
     'POST /billing/webhook',
     'GET /auth/oauth/callback/openai',
   ])

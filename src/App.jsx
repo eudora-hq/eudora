@@ -24,6 +24,7 @@ import Team from './pages/Team'
 import Subscription from './pages/Subscription'
 import SystemHealth from './pages/SystemHealth'
 import Integrations from './pages/Integrations'
+import OAuthCallback from './pages/OAuthCallback'
 
 function ProtectedRoute({ children }) {
   const { isAuthenticated, user } = useAuthStore()
@@ -99,6 +100,7 @@ export default function App() {
         <Route path="/login" element={<AuthRoute><Login /></AuthRoute>} />
         <Route path="/reset-password" element={<ResetPassword />} />
         <Route path="/accept-invite" element={<AcceptInvite />} />
+        <Route path="/auth/callback" element={<OAuthCallback />} />
         <Route path="/onboarding" element={<Onboarding />} />
         <Route path="/setup" element={<ProtectedRoute><SelfHostedSetup /></ProtectedRoute>} />
         <Route path="/billing/success" element={<BillingSuccess />} />

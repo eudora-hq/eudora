@@ -16,7 +16,13 @@ export default function Login() {
   const [confirmPassword, setConfirmPassword] = useState('');
   const [name, setName] = useState('');
   const [isLoading, setIsLoading] = useState(false);
-  const [authError, setAuthError] = useState('');
+  const [authError, setAuthError] = useState(() => {
+    const oauthError = searchParams.get('error');
+    if (oauthError === 'oauth_cancelled') return 'Social login was cancelled';
+    if (oauthError === 'oauth_invalid_state') return 'Social login session expired. Please try again';
+    if (oauthError === 'oauth_failed') return 'Social login failed. Please try again';
+    return '';
+  });
   const [forgotSent, setForgotSent] = useState(false);
   const [mfaRequired, setMfaRequired] = useState(false);
   const [mfaCode, setMfaCode] = useState('');
@@ -129,6 +135,7 @@ export default function Login() {
 
   const strength = getPasswordStrength();
   const pwdMatchError = activeTab === 'create' && confirmPassword && password !== confirmPassword;
+  const apiUrl = import.meta.env.VITE_API_URL || 'http://localhost:3001';
 
   return (
     <div className="flex flex-col min-h-screen text-white font-sans overflow-x-hidden bg-[#050505] relative z-0">
@@ -229,6 +236,32 @@ export default function Login() {
                 </button>
               </div>
             ) : (
+            <>
+            {!mfaRequired && (
+              <>
+                <div className="space-y-2 mb-6">
+                  <a
+                    href={`${apiUrl}/auth/oauth/google`}
+                    className="w-full flex items-center justify-center gap-3 border border-[#262626] py-3 font-mono text-[11px] text-text-muted hover:border-primary hover:text-white uppercase tracking-widest transition-colors"
+                  >
+                    <span className="material-symbols-outlined text-[18px]">account_circle</span>
+                    Continue with Google
+                  </a>
+                  <a
+                    href={`${apiUrl}/auth/oauth/github`}
+                    className="w-full flex items-center justify-center gap-3 border border-[#262626] py-3 font-mono text-[11px] text-text-muted hover:border-primary hover:text-white uppercase tracking-widest transition-colors"
+                  >
+                    <span className="material-symbols-outlined text-[18px]">code</span>
+                    Continue with GitHub
+                  </a>
+                </div>
+                <div className="flex items-center gap-3 mb-6">
+                  <div className="flex-1 h-px bg-[#262626]" />
+                  <span className="font-mono text-[9px] text-text-muted uppercase tracking-widest">or</span>
+                  <div className="flex-1 h-px bg-[#262626]" />
+                </div>
+              </>
+            )}
             <form className="space-y-6" onSubmit={handleAuth}>
               {mfaRequired ? (
                 <>
@@ -396,6 +429,7 @@ export default function Login() {
               </>
               )}
             </form>
+            </>
             )}
           </div>
           <p className="mt-8 text-center font-mono text-[10px] text-[#A3A3A3]/40 uppercase tracking-[0.2em]">

@@ -59,6 +59,7 @@ DB_PATH=/data/eudora.db  # persistent storage path
 # Recommended
 PORT=3001
 CLIENT_URL=https://your-domain.com
+API_URL=https://api.your-domain.com
 JWT_EXPIRES_IN=15m
 REFRESH_TOKEN_EXPIRES_DAYS=7
 
@@ -76,6 +77,12 @@ STRIPE_PRICE_ENTERPRISE=
 OPENAI_OAUTH_CLIENT_ID=
 OPENAI_OAUTH_CLIENT_SECRET=
 OPENAI_OAUTH_REDIRECT_URI=https://your-domain.com/auth/oauth/callback/openai
+
+# Optional — social login
+GOOGLE_CLIENT_ID=
+GOOGLE_CLIENT_SECRET=
+GITHUB_CLIENT_ID=
+GITHUB_CLIENT_SECRET=
 ```
 
 Create or edit the root `.env` before building the frontend:
@@ -218,6 +225,7 @@ docker-compose up -d
 | `DB_PATH` | No | SQLite file path. Default: `./eudora.db` |
 | `PORT` | No | Server port. Default: `3001` |
 | `CLIENT_URL` | No | Frontend URL for CORS and Stripe redirects. Default: `http://localhost:5173` |
+| `API_URL` | No | Public backend URL used for Google and GitHub OAuth callbacks. Default: `http://localhost:3001` |
 | `STRIPE_SECRET_KEY` | No | Only needed for cloud billing |
 | `STRIPE_WEBHOOK_SECRET` | No | Only needed for cloud billing |
 | `STRIPE_PRICE_STARTER` | No | Stripe price ID for Starter plan |
@@ -226,6 +234,10 @@ docker-compose up -d
 | `OPENAI_OAUTH_CLIENT_ID` | No | Only needed for OpenAI OAuth flow |
 | `OPENAI_OAUTH_CLIENT_SECRET` | No | Only needed for OpenAI OAuth flow |
 | `OPENAI_OAUTH_REDIRECT_URI` | No | OAuth callback URL for OpenAI OAuth flow |
+| `GOOGLE_CLIENT_ID` | No | Google OAuth client ID for social login |
+| `GOOGLE_CLIENT_SECRET` | No | Google OAuth client secret |
+| `GITHUB_CLIENT_ID` | No | GitHub OAuth App client ID for social login |
+| `GITHUB_CLIENT_SECRET` | No | GitHub OAuth App client secret |
 
 ## Connecting AI providers
 

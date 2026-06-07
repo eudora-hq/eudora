@@ -26,6 +26,97 @@ function hasColumn(db, table, column) {
   return db.prepare(`PRAGMA table_info(${table})`).all().some((item) => item.name === column)
 }
 
+function oauthCallbackUrl(provider) {
+  const apiUrl = process.env.API_URL || 'http://localhost:3001'
+  return `${apiUrl.replace(/\/$/, '')}/auth/callback/${provider}`
+}
+
+function oauthFrontendRedirect(result) {
+  const clientUrl = (process.env.CLIENT_URL || 'http://localhost:5173').replace(/\/$/, '')
+  const params = new URLSearchParams({
+    accessToken: result.accessToken,
+    refreshToken: result.refreshToken,
+    userId: result.user.id,
+    email: result.user.email,
+    name: result.user.name || '',
+    role: result.user.role,
+    plan: result.tenant?.plan || 'trial',
+    trialEndsAt: String(result.tenant?.trial_ends_at ?? ''),
+    onboardingCompleted: String(result.user.onboarding_completed === 1),
+  })
+  return `${clientUrl}/auth/callback?${params}`
+}
+
+async function findOrCreateOAuthUser({ email, name, provider, providerId, db }) {
+  if (!isValidEmail(email)) throw new Error('OAuth provider did not return a valid email')
+
+  const normalisedEmail = email.trim().toLowerCase()
+  let user = db.prepare('SELECT * FROM users WHERE LOWER(email) = ?').get(normalisedEmail)
+
+  if (!user) {
+    const userId = nanoid()
+    const tenantId = nanoid()
+    const now = Date.now()
+    const displayName = name?.trim() || normalisedEmail.split('@')[0]
+
+    db.transaction(() => {
+      db.prepare(`
+        INSERT INTO tenants (id, name, plan, trial_ends_at, created_at)
+        VALUES (?, ?, 'trial', ?, ?)
+      `).run(
+        tenantId,
+        `${displayName}'s workspace`,
+        now + 14 * 24 * 60 * 60 * 1000,
+        now
+      )
+
+      if (hasColumn(db, 'users', 'name')) {
+        db.prepare(`
+          INSERT INTO users (
+            id, tenant_id, email, name, password_hash, role, onboarding_completed
+          )
+          VALUES (?, ?, ?, ?, '', 'owner', 0)
+        `).run(userId, tenantId, normalisedEmail, displayName)
+      } else {
+        db.prepare(`
+          INSERT INTO users (
+            id, tenant_id, email, password_hash, role, onboarding_completed
+          )
+          VALUES (?, ?, ?, '', 'owner', 0)
+        `).run(userId, tenantId, normalisedEmail)
+      }
+    })()
+
+    seedFeatureFlags(db, tenantId, 'trial')
+    sendWelcomeEmail({ to: normalisedEmail, name: displayName }).catch((error) => {
+      console.error('[email] Welcome email failed:', error.message)
+    })
+    user = db.prepare('SELECT * FROM users WHERE id = ?').get(userId)
+  }
+
+  const tenant = db.prepare('SELECT * FROM tenants WHERE id = ?').get(user.tenant_id)
+  const accessToken = generateAccessToken({
+    userId: user.id,
+    tenantId: user.tenant_id,
+    role: user.role,
+  })
+  const { raw, hashed } = generateRefreshToken()
+  const now = Date.now()
+  db.prepare(`
+    INSERT INTO refresh_tokens (id, user_id, token_hash, expires_at, created_at)
+    VALUES (?, ?, ?, ?, ?)
+  `).run(nanoid(), user.id, hashed, now + 30 * 24 * 60 * 60 * 1000, now)
+
+  db.prepare('UPDATE users SET last_login = ? WHERE id = ?').run(now, user.id)
+
+  // Provider identifiers are intentionally not persisted until a dedicated
+  // linked-identities table is introduced.
+  void provider
+  void providerId
+
+  return { accessToken, refreshToken: raw, user, tenant }
+}
+
 export default async function authRoutes(fastify) {
   const db = fastify.db
 
@@ -459,6 +550,144 @@ export default async function authRoutes(fastify) {
       db.prepare('DELETE FROM refresh_tokens WHERE token_hash = ?').run(hashRefreshToken(refreshToken))
     }
     return reply.code(200).send({ success: true })
+  })
+
+  fastify.get('/auth/oauth/google', async (request, reply) => {
+    if (!process.env.GOOGLE_CLIENT_ID) {
+      return reply.code(503).send({ error: 'google_oauth_not_configured' })
+    }
+
+    const params = new URLSearchParams({
+      client_id: process.env.GOOGLE_CLIENT_ID,
+      redirect_uri: oauthCallbackUrl('google'),
+      response_type: 'code',
+      scope: 'openid email profile',
+      state: createState(),
+      access_type: 'online',
+      prompt: 'select_account',
+    })
+    return reply.redirect(`https://accounts.google.com/o/oauth2/v2/auth?${params}`)
+  })
+
+  fastify.get('/auth/callback/google', async (request, reply) => {
+    const { code, error, state } = request.query
+    const clientUrl = process.env.CLIENT_URL || 'http://localhost:5173'
+    if (error) return reply.redirect(`${clientUrl}/login?error=oauth_cancelled`)
+    if (!code || !validateState(state)) {
+      return reply.redirect(`${clientUrl}/login?error=oauth_invalid_state`)
+    }
+
+    try {
+      const tokenResponse = await fetch('https://oauth2.googleapis.com/token', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+        body: new URLSearchParams({
+          code,
+          client_id: process.env.GOOGLE_CLIENT_ID,
+          client_secret: process.env.GOOGLE_CLIENT_SECRET,
+          redirect_uri: oauthCallbackUrl('google'),
+          grant_type: 'authorization_code',
+        }),
+      })
+      if (!tokenResponse.ok) throw new Error(`Google token exchange failed: ${tokenResponse.status}`)
+      const tokenData = await tokenResponse.json()
+      if (!tokenData.access_token) throw new Error('Google access token missing')
+
+      const userResponse = await fetch('https://www.googleapis.com/oauth2/v2/userinfo', {
+        headers: { Authorization: `Bearer ${tokenData.access_token}` },
+      })
+      if (!userResponse.ok) throw new Error(`Google user lookup failed: ${userResponse.status}`)
+      const googleUser = await userResponse.json()
+      if (googleUser.verified_email === false) throw new Error('Google email is not verified')
+
+      const result = await findOrCreateOAuthUser({
+        email: googleUser.email,
+        name: googleUser.name,
+        provider: 'google',
+        providerId: googleUser.id,
+        db,
+      })
+      return reply.redirect(oauthFrontendRedirect(result))
+    } catch (oauthError) {
+      console.error('[oauth] Google login failed:', oauthError.message)
+      return reply.redirect(`${clientUrl}/login?error=oauth_failed`)
+    }
+  })
+
+  fastify.get('/auth/oauth/github', async (request, reply) => {
+    if (!process.env.GITHUB_CLIENT_ID) {
+      return reply.code(503).send({ error: 'github_oauth_not_configured' })
+    }
+
+    const params = new URLSearchParams({
+      client_id: process.env.GITHUB_CLIENT_ID,
+      redirect_uri: oauthCallbackUrl('github'),
+      scope: 'user:email',
+      state: createState(),
+    })
+    return reply.redirect(`https://github.com/login/oauth/authorize?${params}`)
+  })
+
+  fastify.get('/auth/callback/github', async (request, reply) => {
+    const { code, error, state } = request.query
+    const clientUrl = process.env.CLIENT_URL || 'http://localhost:5173'
+    if (error) return reply.redirect(`${clientUrl}/login?error=oauth_cancelled`)
+    if (!code || !validateState(state)) {
+      return reply.redirect(`${clientUrl}/login?error=oauth_invalid_state`)
+    }
+
+    try {
+      const tokenResponse = await fetch('https://github.com/login/oauth/access_token', {
+        method: 'POST',
+        headers: {
+          Accept: 'application/json',
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          client_id: process.env.GITHUB_CLIENT_ID,
+          client_secret: process.env.GITHUB_CLIENT_SECRET,
+          code,
+          redirect_uri: oauthCallbackUrl('github'),
+        }),
+      })
+      if (!tokenResponse.ok) throw new Error(`GitHub token exchange failed: ${tokenResponse.status}`)
+      const tokenData = await tokenResponse.json()
+      if (!tokenData.access_token) throw new Error(tokenData.error_description || 'GitHub access token missing')
+
+      const githubHeaders = {
+        Authorization: `Bearer ${tokenData.access_token}`,
+        Accept: 'application/vnd.github+json',
+        'User-Agent': 'Eudora',
+      }
+      const userResponse = await fetch('https://api.github.com/user', {
+        headers: githubHeaders,
+      })
+      if (!userResponse.ok) throw new Error(`GitHub user lookup failed: ${userResponse.status}`)
+      const githubUser = await userResponse.json()
+
+      let email = githubUser.email
+      if (!email) {
+        const emailResponse = await fetch('https://api.github.com/user/emails', {
+          headers: githubHeaders,
+        })
+        if (!emailResponse.ok) throw new Error(`GitHub email lookup failed: ${emailResponse.status}`)
+        const emails = await emailResponse.json()
+        email = emails.find(item => item.primary && item.verified)?.email
+          || emails.find(item => item.verified)?.email
+      }
+
+      const result = await findOrCreateOAuthUser({
+        email,
+        name: githubUser.name || githubUser.login,
+        provider: 'github',
+        providerId: String(githubUser.id),
+        db,
+      })
+      return reply.redirect(oauthFrontendRedirect(result))
+    } catch (oauthError) {
+      console.error('[oauth] GitHub login failed:', oauthError.message)
+      return reply.redirect(`${clientUrl}/login?error=oauth_failed`)
+    }
   })
 
   fastify.patch('/users/me', { preHandler: authenticate }, async (request, reply) => {
