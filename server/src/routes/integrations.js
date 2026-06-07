@@ -1,0 +1,218 @@
+import { nanoid } from 'nanoid'
+import { testConnection, pullAuditLogs } from '../integrations/azureOpenAI.js'
+import { encrypt, decrypt } from '../utils/encryption.js'
+import { createNotification } from '../utils/notify.js'
+
+const REQUIRED_AZURE_FIELDS = [
+  'tenantId',
+  'clientId',
+  'clientSecret',
+  'subscriptionId',
+  'resourceGroup',
+  'resourceName',
+]
+
+function hasRequiredAzureConfig(config) {
+  return REQUIRED_AZURE_FIELDS.every(field => (
+    typeof config?.[field] === 'string' && config[field].trim()
+  ))
+}
+
+function requireIntegrationAdmin(request, reply) {
+  if (!['owner', 'admin'].includes(request.user?.role)) {
+    reply.code(403).send({
+      error: 'forbidden',
+      message: 'Only team owners and admins can manage integrations.',
+    })
+    return false
+  }
+  return true
+}
+
+function encodeConfig(config) {
+  const { ciphertext, iv } = encrypt(JSON.stringify(config))
+  return JSON.stringify({ ciphertext, iv })
+}
+
+function decodeConfig(storedConfig) {
+  const encoded = JSON.parse(storedConfig)
+  if (encoded.ciphertext && encoded.iv) {
+    return JSON.parse(decrypt(encoded.ciphertext, encoded.iv))
+  }
+  return encoded
+}
+
+function auditAction(operation) {
+  const normalized = String(operation || 'request')
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '_')
+    .replace(/^_+|_+$/g, '')
+  return `azure_openai_${normalized || 'request'}`
+}
+
+export default async function integrationsRoutes(fastify) {
+  const db = fastify.db
+
+  fastify.get('/', async (request) => {
+    return db.prepare(`
+      SELECT
+        id, type, name, status, last_sync_at, last_sync_status,
+        last_sync_count, created_at
+      FROM integrations
+      WHERE tenant_id = ?
+      ORDER BY created_at DESC
+    `).all(request.tenantId)
+  })
+
+  fastify.post('/azure-openai/test', async (request, reply) => {
+    if (!requireIntegrationAdmin(request, reply)) return
+
+    const { config } = request.body || {}
+    if (!hasRequiredAzureConfig(config)) {
+      return reply.code(400).send({
+        error: 'missing_config',
+        message: `Required fields: ${REQUIRED_AZURE_FIELDS.join(', ')}`,
+      })
+    }
+
+    return reply.send(await testConnection(config))
+  })
+
+  fastify.post('/azure-openai', async (request, reply) => {
+    if (!requireIntegrationAdmin(request, reply)) return
+
+    const { name, config } = request.body || {}
+    if (!name?.trim() || !hasRequiredAzureConfig(config)) {
+      return reply.code(400).send({ error: 'missing_fields' })
+    }
+
+    const connection = await testConnection(config)
+    if (!connection.success) {
+      return reply.code(400).send({
+        error: 'connection_failed',
+        message: connection.error,
+      })
+    }
+
+    const id = nanoid()
+    const createdAt = Date.now()
+    db.prepare(`
+      INSERT INTO integrations (
+        id, tenant_id, type, name, config, status, created_at
+      )
+      VALUES (?, ?, 'azure_openai', ?, ?, 'active', ?)
+    `).run(
+      id,
+      request.tenantId,
+      name.trim(),
+      encodeConfig(config),
+      createdAt
+    )
+
+    return reply.code(201).send({
+      id,
+      name: name.trim(),
+      type: 'azure_openai',
+      status: 'active',
+      created_at: createdAt,
+    })
+  })
+
+  fastify.post('/:id/sync', async (request, reply) => {
+    if (!requireIntegrationAdmin(request, reply)) return
+
+    const integration = db.prepare(`
+      SELECT *
+      FROM integrations
+      WHERE id = ? AND tenant_id = ?
+    `).get(request.params.id, request.tenantId)
+    if (!integration) return reply.code(404).send({ error: 'not_found' })
+    if (integration.type !== 'azure_openai') {
+      return reply.code(400).send({ error: 'unsupported_integration' })
+    }
+
+    let config
+    try {
+      config = decodeConfig(integration.config)
+    } catch {
+      return reply.code(500).send({
+        error: 'invalid_integration_config',
+        message: 'Stored integration credentials could not be decrypted.',
+      })
+    }
+
+    const since = integration.last_sync_at || Date.now() - 24 * 60 * 60 * 1000
+
+    try {
+      const events = await pullAuditLogs(config, since)
+      const insertAudit = db.prepare(`
+        INSERT INTO audit_log (
+          id, tenant_id, user_id, action, risk_score, metadata,
+          initiated_by_user_id, agent_chain, ts
+        )
+        VALUES (?, ?, ?, ?, 0, ?, ?, '[]', ?)
+      `)
+      let imported = 0
+
+      const importEvents = db.transaction(() => {
+        for (const event of events) {
+          insertAudit.run(
+            nanoid(),
+            request.tenantId,
+            request.user.userId,
+            auditAction(event.operation),
+            JSON.stringify({
+              source: 'azure_openai',
+              integrationId: integration.id,
+              integrationName: integration.name,
+              ...event,
+            }),
+            request.user.userId,
+            event.timestamp || Date.now()
+          )
+          imported += 1
+        }
+      })
+      importEvents()
+
+      const syncedAt = Date.now()
+      db.prepare(`
+        UPDATE integrations
+        SET last_sync_at = ?, last_sync_status = 'success', last_sync_count = ?
+        WHERE id = ? AND tenant_id = ?
+      `).run(syncedAt, imported, integration.id, request.tenantId)
+
+      if (imported > 0) {
+        createNotification(db, {
+          tenantId: request.tenantId,
+          type: 'integration_sync',
+          title: 'Azure OpenAI sync complete',
+          message: `Imported ${imported} events from "${integration.name}"`,
+          actionUrl: '/audit',
+        })
+      }
+
+      return reply.send({ imported, total: events.length, syncedAt })
+    } catch (error) {
+      const status = `failed: ${error.message.substring(0, 100)}`
+      db.prepare(`
+        UPDATE integrations
+        SET last_sync_at = ?, last_sync_status = ?, last_sync_count = 0
+        WHERE id = ? AND tenant_id = ?
+      `).run(Date.now(), status, integration.id, request.tenantId)
+
+      return reply.code(500).send({
+        error: 'sync_failed',
+        message: error.message,
+      })
+    }
+  })
+
+  fastify.delete('/:id', async (request, reply) => {
+    if (!requireIntegrationAdmin(request, reply)) return
+
+    db.prepare('DELETE FROM integrations WHERE id = ? AND tenant_id = ?')
+      .run(request.params.id, request.tenantId)
+    return reply.send({ deleted: true })
+  })
+}

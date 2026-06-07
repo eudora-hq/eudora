@@ -23,6 +23,7 @@ import AcceptInvite from './pages/AcceptInvite'
 import Team from './pages/Team'
 import Subscription from './pages/Subscription'
 import SystemHealth from './pages/SystemHealth'
+import Integrations from './pages/Integrations'
 
 function ProtectedRoute({ children }) {
   const { isAuthenticated, user } = useAuthStore()
@@ -117,6 +118,7 @@ export default function App() {
           <Route path="workflows/:id" element={<WorkflowCanvas />} />
           <Route path="cron" element={<CronJobs />} />
           <Route path="system-health" element={<SystemHealth />} />
+          <Route path="integrations" element={<Integrations />} />
         </Route>
         <Route path="*" element={<Navigate to="/login" replace />} />
       </Routes>
