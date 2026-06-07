@@ -18,6 +18,8 @@ export default function Login() {
   const [isLoading, setIsLoading] = useState(false);
   const [authError, setAuthError] = useState('');
   const [forgotSent, setForgotSent] = useState(false);
+  const [mfaRequired, setMfaRequired] = useState(false);
+  const [mfaCode, setMfaCode] = useState('');
   
   const navigate = useNavigate();
 
@@ -32,7 +34,17 @@ export default function Login() {
         await api.post('/auth/register', { name, email, password });
       }
 
-      const res = await api.post('/auth/login', { email, password });
+      const res = await api.post('/auth/login', {
+        email,
+        password,
+        ...(mfaRequired ? { mfaCode } : {}),
+      });
+      if (res.data.mfaRequired) {
+        setMfaRequired(true);
+        setMfaCode('');
+        return;
+      }
+
       const authUser = {
         ...res.data.user,
         plan: res.data.user?.plan || 'trial',
@@ -64,6 +76,8 @@ export default function Login() {
     } catch (error) {
       if (!error.response) {
         setAuthError('Unable to connect. Is the server running?');
+      } else if (activeTab === 'signin' && error.response.data?.error === 'invalid_mfa_code') {
+        setAuthError('Invalid authentication code');
       } else if (activeTab === 'signin' && error.response.status === 401) {
         setAuthError('Invalid email or password');
       } else if (activeTab === 'create' && error.response.status === 409) {
@@ -158,13 +172,13 @@ export default function Login() {
             {/* Tabs */}
             <div className="flex border-b border-[#262626] mb-8">
               <button 
-                onClick={() => setActiveTab('signin')}
+                onClick={() => { setActiveTab('signin'); setMfaRequired(false); setMfaCode(''); }}
                 className={`flex-1 pb-3 font-mono text-[10px] uppercase font-bold tracking-[0.15em] transition-colors ${activeTab === 'signin' ? 'text-primary border-b-2 border-primary' : 'text-text-muted hover:text-white'}`}
               >
                 SIGN IN
               </button>
               <button 
-                onClick={() => setActiveTab('create')}
+                onClick={() => { setActiveTab('create'); setMfaRequired(false); setMfaCode(''); }}
                 className={`flex-1 pb-3 font-mono text-[10px] uppercase font-bold tracking-[0.15em] transition-colors ${activeTab === 'create' ? 'text-primary border-b-2 border-primary' : 'text-text-muted hover:text-white'}`}
               >
                 CREATE ACCOUNT
@@ -216,6 +230,50 @@ export default function Login() {
               </div>
             ) : (
             <form className="space-y-6" onSubmit={handleAuth}>
+              {mfaRequired ? (
+                <>
+                  <div className="border border-primary/30 bg-primary/5 p-4">
+                    <p className="font-mono text-[10px] text-primary uppercase tracking-widest">Two-factor authentication required</p>
+                    <p className="font-mono text-[10px] text-text-muted mt-2">Enter the 6-digit code from your authenticator app.</p>
+                  </div>
+                  <div className="space-y-2">
+                    <label className="font-mono text-[10px] text-[#A3A3A3] uppercase tracking-[0.15em] block">Authentication Code</label>
+                    <div className="relative group/input">
+                      <span className="material-symbols-outlined absolute left-4 top-1/2 -translate-y-1/2 text-[#A3A3A3]/40 group-focus-within/input:text-primary transition-colors">password</span>
+                      <input
+                        required
+                        autoFocus
+                        inputMode="numeric"
+                        autoComplete="one-time-code"
+                        maxLength={6}
+                        value={mfaCode}
+                        onChange={e => setMfaCode(e.target.value.replace(/\D/g, '').slice(0, 6))}
+                        className="w-full bg-[#050505] border border-[#262626] text-white px-12 py-4 focus:outline-none focus:border-primary focus:ring-1 focus:ring-primary/20 transition-all font-mono text-[18px] tracking-[0.4em] placeholder:text-[#A3A3A3]/30"
+                        placeholder="000000"
+                      />
+                    </div>
+                  </div>
+                  {authError && <p className="text-danger font-mono text-[10px] uppercase tracking-[0.15em]">{authError}</p>}
+                  <div className="pt-2">
+                    <button
+                      type="submit"
+                      disabled={isLoading || mfaCode.length !== 6}
+                      className="primary-btn relative w-full bg-primary text-[#050505] py-4 px-6 font-mono text-[14px] font-bold uppercase tracking-[0.15em] transition-all overflow-hidden active:scale-[0.98] cursor-pointer disabled:opacity-50"
+                    >
+                      <span className="relative z-10">{isLoading ? 'VERIFYING...' : 'VERIFY AUTHENTICATION CODE'}</span>
+                      <div className="scan-line"></div>
+                    </button>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => { setMfaRequired(false); setMfaCode(''); setAuthError(''); }}
+                    className="w-full font-mono text-[10px] text-text-muted hover:text-primary uppercase tracking-widest cursor-pointer transition-colors"
+                  >
+                    Back to login
+                  </button>
+                </>
+              ) : (
+              <>
               {activeTab === 'create' && (
                 <div className="space-y-2">
                   <label className="font-mono text-[10px] text-[#A3A3A3] uppercase tracking-[0.15em] block">Full Name</label>
@@ -334,6 +392,8 @@ export default function Login() {
                     </button>
                   </div>
                 </>
+              )}
+              </>
               )}
             </form>
             )}

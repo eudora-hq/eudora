@@ -31,6 +31,12 @@ export default function Settings() {
   const [profileMessage, setProfileMessage] = useState('');
   const [billingError, setBillingError] = useState('');
   const [showPlanModal, setShowPlanModal] = useState(false);
+  const [mfaStatus, setMfaStatus] = useState({ enabled: false, pending: false });
+  const [mfaSetup, setMfaSetup] = useState(null);
+  const [mfaCode, setMfaCode] = useState('');
+  const [mfaLoading, setMfaLoading] = useState(false);
+  const [mfaMessage, setMfaMessage] = useState('');
+  const [showDisableMfa, setShowDisableMfa] = useState(false);
 
   useEffect(() => {
     loadSettings();
@@ -38,12 +44,14 @@ export default function Settings() {
 
   const loadSettings = async () => {
     try {
-      const [keysRes, usageRes] = await Promise.all([
+      const [keysRes, usageRes, mfaRes] = await Promise.all([
         api.get('/api-keys'),
         api.get('/billing/usage').catch(() => ({ data: placeholderUsage(plan) })),
+        api.get('/auth/mfa/status').catch(() => ({ data: { enabled: false, pending: false } })),
       ]);
       setKeys(keysRes.data);
       setUsage(usageRes.data);
+      setMfaStatus(mfaRes.data);
     } catch {
       setKeys([]);
       setBillingError('Unable to load settings');
@@ -145,6 +153,53 @@ export default function Settings() {
     }
   };
 
+  const beginMfaSetup = async () => {
+    setMfaLoading(true);
+    setMfaMessage('');
+    setMfaCode('');
+    try {
+      const res = await api.post('/auth/mfa/setup');
+      setMfaSetup(res.data);
+      setMfaStatus({ enabled: false, pending: true });
+    } catch (err) {
+      setMfaMessage(err.response?.data?.message || 'MFA SETUP FAILED');
+    } finally {
+      setMfaLoading(false);
+    }
+  };
+
+  const verifyMfa = async () => {
+    setMfaLoading(true);
+    setMfaMessage('');
+    try {
+      await api.post('/auth/mfa/verify', { code: mfaCode });
+      setMfaStatus({ enabled: true, pending: false });
+      setMfaSetup(null);
+      setMfaCode('');
+      setMfaMessage('MFA ENABLED');
+    } catch (err) {
+      setMfaMessage(err.response?.data?.message || 'INVALID VERIFICATION CODE');
+    } finally {
+      setMfaLoading(false);
+    }
+  };
+
+  const disableMfa = async () => {
+    setMfaLoading(true);
+    setMfaMessage('');
+    try {
+      await api.post('/auth/mfa/disable', { code: mfaCode });
+      setMfaStatus({ enabled: false, pending: false });
+      setMfaCode('');
+      setShowDisableMfa(false);
+      setMfaMessage('MFA DISABLED');
+    } catch (err) {
+      setMfaMessage(err.response?.data?.message || 'INVALID AUTHENTICATION CODE');
+    } finally {
+      setMfaLoading(false);
+    }
+  };
+
   const activePlan = usage?.plan || plan;
   const showUpgradeButton = activePlan === 'trial' && !isSelfHosted;
   const showManageButton = ['starter', 'professional', 'enterprise'].includes(activePlan) && !isSelfHosted;
@@ -222,6 +277,125 @@ export default function Settings() {
               </button>
             </div>
           </div>
+        )}
+      </section>
+
+      <section className="border border-[#262626] bg-[#0a0a0a] p-6 lg:p-8">
+        <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 mb-6">
+          <div className="flex items-center gap-3">
+            <span className="material-symbols-outlined text-primary text-[20px]">security</span>
+            <div>
+              <h2 className="font-mono text-[14px] text-white uppercase font-bold tracking-widest">Two-Factor Authentication</h2>
+              <p className="font-mono text-[9px] text-text-muted mt-1">TOTP compatible with Google Authenticator, Authy, and 1Password.</p>
+            </div>
+          </div>
+          {mfaStatus.enabled && (
+            <span className="border border-primary/30 bg-primary/10 px-3 py-1 font-mono text-[9px] text-primary uppercase font-bold tracking-widest">
+              MFA Active
+            </span>
+          )}
+        </div>
+
+        {!mfaStatus.enabled && !mfaSetup && (
+          <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 border border-[#262626] bg-[#050505] p-4">
+            <p className="font-mono text-[10px] text-text-muted">Require a rotating 6-digit code when signing in.</p>
+            <button
+              onClick={beginMfaSetup}
+              disabled={mfaLoading}
+              className="border border-primary/40 text-primary hover:bg-primary/10 px-5 py-2.5 font-mono text-[10px] uppercase tracking-widest cursor-pointer disabled:opacity-50 transition-colors"
+            >
+              {mfaLoading ? 'Preparing...' : 'Enable MFA'}
+            </button>
+          </div>
+        )}
+
+        {mfaSetup && !mfaStatus.enabled && (
+          <div className="grid grid-cols-1 md:grid-cols-[220px_1fr] gap-6 border border-[#262626] bg-[#050505] p-5">
+            <div className="bg-white p-3 w-fit">
+              <img src={mfaSetup.qrDataUrl} alt="Eudora MFA QR code" className="w-44 h-44" />
+            </div>
+            <div className="space-y-4 min-w-0">
+              <div>
+                <p className="font-mono text-[10px] text-white uppercase tracking-widest">1. Scan the QR code</p>
+                <p className="font-mono text-[9px] text-text-muted mt-1">Open your authenticator app and add a new account.</p>
+              </div>
+              <div>
+                <p className="font-mono text-[9px] text-text-muted uppercase tracking-widest">Manual setup key</p>
+                <code className="font-mono text-[10px] text-primary break-all block mt-1 border border-[#262626] p-3">{mfaSetup.secret}</code>
+              </div>
+              <div className="space-y-2">
+                <label className="font-mono text-[9px] text-text-muted uppercase tracking-widest">2. Verify 6-digit code</label>
+                <div className="flex flex-col sm:flex-row gap-3">
+                  <input
+                    inputMode="numeric"
+                    autoComplete="one-time-code"
+                    maxLength={6}
+                    value={mfaCode}
+                    onChange={e => setMfaCode(e.target.value.replace(/\D/g, '').slice(0, 6))}
+                    className="flex-1 bg-[#0a0a0a] border border-[#262626] text-white px-4 py-3 font-mono text-[14px] tracking-[0.3em] focus:outline-none focus:border-primary"
+                    placeholder="000000"
+                  />
+                  <button
+                    onClick={verifyMfa}
+                    disabled={mfaLoading || mfaCode.length !== 6}
+                    className="bg-primary text-[#050505] px-6 py-3 font-mono text-[10px] font-bold uppercase tracking-widest cursor-pointer disabled:opacity-50 hover:bg-primary/90 transition-colors"
+                  >
+                    {mfaLoading ? 'Verifying...' : 'Verify & Enable'}
+                  </button>
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {mfaStatus.enabled && (
+          <div className="border border-[#262626] bg-[#050505] p-4">
+            {!showDisableMfa ? (
+              <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
+                <p className="font-mono text-[10px] text-text-muted">Your account requires an authenticator code at login.</p>
+                <button
+                  onClick={() => { setShowDisableMfa(true); setMfaCode(''); setMfaMessage(''); }}
+                  className="border border-red-500/30 text-red-400 hover:bg-red-500/10 px-5 py-2.5 font-mono text-[10px] uppercase tracking-widest cursor-pointer transition-colors"
+                >
+                  Disable MFA
+                </button>
+              </div>
+            ) : (
+              <div className="space-y-3">
+                <p className="font-mono text-[10px] text-text-muted">Enter your current authenticator code to disable MFA.</p>
+                <div className="flex flex-col sm:flex-row gap-3">
+                  <input
+                    inputMode="numeric"
+                    autoComplete="one-time-code"
+                    maxLength={6}
+                    value={mfaCode}
+                    onChange={e => setMfaCode(e.target.value.replace(/\D/g, '').slice(0, 6))}
+                    className="flex-1 bg-[#0a0a0a] border border-[#262626] text-white px-4 py-3 font-mono text-[14px] tracking-[0.3em] focus:outline-none focus:border-primary"
+                    placeholder="000000"
+                  />
+                  <button
+                    onClick={disableMfa}
+                    disabled={mfaLoading || mfaCode.length !== 6}
+                    className="border border-red-500/30 text-red-400 hover:bg-red-500/10 px-5 py-2.5 font-mono text-[10px] uppercase tracking-widest cursor-pointer disabled:opacity-50 transition-colors"
+                  >
+                    {mfaLoading ? 'Disabling...' : 'Confirm Disable'}
+                  </button>
+                  <button
+                    onClick={() => { setShowDisableMfa(false); setMfaCode(''); }}
+                    className="border border-[#262626] text-text-muted hover:text-white px-5 py-2.5 font-mono text-[10px] uppercase tracking-widest cursor-pointer transition-colors"
+                  >
+                    Cancel
+                  </button>
+                </div>
+              </div>
+            )}
+          </div>
+        )}
+
+        {mfaMessage && (
+          <p className={`font-mono text-[10px] uppercase tracking-widest mt-4 ${mfaMessage.includes('ENABLED') ? 'text-primary' : 'text-warning'}`}>
+            {mfaMessage}
+          </p>
         )}
       </section>
 

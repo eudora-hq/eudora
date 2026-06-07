@@ -1,5 +1,7 @@
 import { nanoid } from 'nanoid'
 import { randomBytes } from 'crypto'
+import { generateSecret, generateURI, verify } from 'otplib'
+import QRCode from 'qrcode'
 import {
   hashPassword,
   verifyPassword,
@@ -71,7 +73,7 @@ export default async function authRoutes(fastify) {
   })
 
   fastify.post('/auth/login', async (request, reply) => {
-    const { email, password } = request.body || {}
+    const { email, password, mfaCode } = request.body || {}
 
     const user = db.prepare('SELECT * FROM users WHERE email = ?').get(email)
     if (!user) {
@@ -81,6 +83,25 @@ export default async function authRoutes(fastify) {
     const valid = await verifyPassword(password || '', user.password_hash)
     if (!valid) {
       return reply.code(401).send({ error: 'invalid_credentials' })
+    }
+
+    if (user.mfa_secret && !user.mfa_secret.startsWith('pending:')) {
+      if (!mfaCode) {
+        return reply.code(200).send({ mfaRequired: true, email: user.email })
+      }
+
+      let verification
+      try {
+        verification = await verify({
+          token: String(mfaCode).replace(/\s/g, ''),
+          secret: user.mfa_secret,
+        })
+      } catch {
+        verification = { valid: false }
+      }
+      if (!verification.valid) {
+        return reply.code(401).send({ error: 'invalid_mfa_code' })
+      }
     }
 
     db.prepare('UPDATE users SET last_login = ? WHERE id = ?').run(Date.now(), user.id)
@@ -109,6 +130,96 @@ export default async function authRoutes(fastify) {
       },
       onboardingCompleted: user.onboarding_completed === 1,
     })
+  })
+
+  fastify.get('/auth/mfa/status', { preHandler: authenticate }, async (request, reply) => {
+    const user = db.prepare('SELECT mfa_secret FROM users WHERE id = ?').get(request.user.userId)
+    if (!user) return reply.code(404).send({ error: 'user_not_found' })
+
+    return reply.send({
+      enabled: Boolean(user.mfa_secret && !user.mfa_secret.startsWith('pending:')),
+      pending: Boolean(user.mfa_secret?.startsWith('pending:')),
+    })
+  })
+
+  fastify.post('/auth/mfa/setup', { preHandler: authenticate }, async (request, reply) => {
+    const user = db.prepare('SELECT id, email FROM users WHERE id = ?').get(request.user.userId)
+    if (!user) return reply.code(404).send({ error: 'user_not_found' })
+
+    const secret = generateSecret()
+    const otpauth = generateURI({
+      issuer: 'Eudora',
+      label: user.email,
+      secret,
+    })
+    const qrDataUrl = await QRCode.toDataURL(otpauth)
+
+    db.prepare('UPDATE users SET mfa_secret = ? WHERE id = ?')
+      .run(`pending:${secret}`, request.user.userId)
+
+    return reply.send({ secret, qrDataUrl, otpauth })
+  })
+
+  fastify.post('/auth/mfa/verify', { preHandler: authenticate }, async (request, reply) => {
+    const { code } = request.body || {}
+    const user = db.prepare('SELECT mfa_secret FROM users WHERE id = ?').get(request.user.userId)
+
+    if (!user?.mfa_secret?.startsWith('pending:')) {
+      return reply.code(400).send({ error: 'no_pending_setup' })
+    }
+    if (!code) {
+      return reply.code(400).send({
+        error: 'invalid_code',
+        message: 'Enter the 6-digit verification code.',
+      })
+    }
+
+    const secret = user.mfa_secret.slice('pending:'.length)
+    let verification
+    try {
+      verification = await verify({
+        token: String(code).replace(/\s/g, ''),
+        secret,
+      })
+    } catch {
+      verification = { valid: false }
+    }
+    if (!verification.valid) {
+      return reply.code(400).send({
+        error: 'invalid_code',
+        message: 'Invalid verification code. Please try again.',
+      })
+    }
+
+    db.prepare('UPDATE users SET mfa_secret = ? WHERE id = ?')
+      .run(secret, request.user.userId)
+    return reply.send({ enabled: true })
+  })
+
+  fastify.post('/auth/mfa/disable', { preHandler: authenticate }, async (request, reply) => {
+    const { code } = request.body || {}
+    const user = db.prepare('SELECT mfa_secret FROM users WHERE id = ?').get(request.user.userId)
+
+    if (!user?.mfa_secret || user.mfa_secret.startsWith('pending:')) {
+      return reply.code(400).send({ error: 'mfa_not_enabled' })
+    }
+    if (!code) return reply.code(400).send({ error: 'invalid_code' })
+
+    let verification
+    try {
+      verification = await verify({
+        token: String(code).replace(/\s/g, ''),
+        secret: user.mfa_secret,
+      })
+    } catch {
+      verification = { valid: false }
+    }
+    if (!verification.valid) {
+      return reply.code(400).send({ error: 'invalid_code' })
+    }
+
+    db.prepare('UPDATE users SET mfa_secret = NULL WHERE id = ?').run(request.user.userId)
+    return reply.send({ disabled: true })
   })
 
   fastify.post('/auth/forgot-password', async (request, reply) => {
