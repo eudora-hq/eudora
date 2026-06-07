@@ -1,6 +1,56 @@
 import { nanoid } from 'nanoid'
 import { encrypt, decrypt } from '../utils/encryption.js'
 import { isUnderLimit } from '../billing/canAccess.js'
+import { generateEmbeddingWithMetadata } from '../utils/embeddings.js'
+
+async function embedContextFile(db, fileId, tenantId, content) {
+  const columns = new Set(
+    db.prepare('PRAGMA table_info(context_files)').all().map(column => column.name)
+  )
+  if (!columns.has('embedding')) return
+
+  const openAIKey = db.prepare(`
+    SELECT key_encrypted, key_iv
+    FROM api_keys
+    WHERE tenant_id = ? AND provider = 'openai' AND key_encrypted IS NOT NULL
+    ORDER BY created_at ASC
+    LIMIT 1
+  `).get(tenantId)
+  const ollamaKey = db.prepare(`
+    SELECT base_url
+    FROM api_keys
+    WHERE tenant_id = ? AND provider = 'ollama' AND base_url IS NOT NULL
+    ORDER BY created_at ASC
+    LIMIT 1
+  `).get(tenantId)
+
+  let provider = 'ollama'
+  let apiKey = null
+  let baseUrl = null
+  if (openAIKey) {
+    provider = 'openai'
+    apiKey = decrypt(openAIKey.key_encrypted, openAIKey.key_iv)
+  } else if (ollamaKey) {
+    baseUrl = ollamaKey.base_url
+  }
+
+  const result = await generateEmbeddingWithMetadata(content, {
+    apiKey,
+    provider,
+    baseUrl,
+  })
+  db.prepare(`
+    UPDATE context_files
+    SET embedding = ?, embedding_model = ?, embedded_at = ?
+    WHERE id = ? AND tenant_id = ?
+  `).run(
+    JSON.stringify(result.embedding),
+    result.model,
+    Date.now(),
+    fileId,
+    tenantId
+  )
+}
 
 export default async function contextRoutes(fastify) {
   const db = fastify.db
@@ -34,6 +84,10 @@ export default async function contextRoutes(fastify) {
     db.prepare(
       'INSERT INTO usage_events (id, tenant_id, event_type, value, ts) VALUES (?, ?, ?, ?, ?)'
     ).run(nanoid(), request.tenantId, 'context_files', 1, now)
+
+    embedContextFile(db, id, request.tenantId, content).catch(err => {
+      console.error('[embed] Failed to embed file:', err.message)
+    })
 
     return reply.code(201).send({ id, agent_id: agentId, filename, tags, created_at: now, updated_at: now })
   })

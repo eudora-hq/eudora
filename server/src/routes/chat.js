@@ -69,7 +69,12 @@ export default async function chatRoutes(fastify) {
       const { intent } = await classify(sanitiserResult.sanitised, agent.api_key_id, request.tenantId)
 
       // Step 3 — Retrieve
-      const { files, excluded } = await retrieve(agentId, intent, request.tenantId)
+      const { files, excluded } = await retrieve(
+        agentId,
+        intent,
+        request.tenantId,
+        sanitiserResult.sanitised
+      )
 
       // Step 4 — Compose
       const composed = compose(agent.system_prompt || '', files, sanitiserResult.sanitised)

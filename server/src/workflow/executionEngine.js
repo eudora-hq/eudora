@@ -208,7 +208,7 @@ async function executeNode(node, input, tenantId, db, context = {}) {
       }
     }
 
-    const { files } = await retrieve(agent.id, 'custom', tenantId)
+    const { files } = await retrieve(agent.id, 'custom', tenantId, sanitiserResult.sanitised)
     const composed = compose(agent.system_prompt || '', files, sanitiserResult.sanitised)
     const { content, tokensUsed } = await relay(composed, agent.api_key_id, tenantId)
     const scopeResult = enforceScope(content, agent.purpose)

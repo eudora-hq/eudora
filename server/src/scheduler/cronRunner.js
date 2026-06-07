@@ -144,7 +144,7 @@ async function runJob(jobId) {
     const classification = await classify(job.prompt, agent.api_key_id, job.tenant_id)
     intent = classification.intent
 
-    const { files } = await retrieve(agent.id, intent, job.tenant_id)
+    const { files } = await retrieve(agent.id, intent, job.tenant_id, sanitiserResult.sanitised)
     const composed = compose(agent.system_prompt || '', files, sanitiserResult.sanitised)
     contextFilesUsed = composed.contextFilesUsed
 
