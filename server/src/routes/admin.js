@@ -36,7 +36,7 @@ export default async function adminRoutes(fastify) {
   const db = fastify.db
 
   fastify.get('/portal', async (request, reply) => {
-    // No auth required — the HTML page itself has a login form that sends the key
+    if (!requireAdmin(request, reply)) return
 
     const html = readFileSync(
       resolve(__dirname, '../admin/index.html'),
