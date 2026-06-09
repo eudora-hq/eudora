@@ -28,7 +28,6 @@ import teamRoutes from './routes/team.js'
 import notificationsRoutes from './routes/notifications.js'
 import integrationsRoutes from './routes/integrations.js'
 import analyticsRoutes from './routes/analytics.js'
-import adminRoutes from './routes/admin.js'
 import { loadAllJobs } from './scheduler/cronRunner.js'
 
 const PORT = process.env.PORT || 3001
@@ -91,7 +90,7 @@ async function start() {
     const path = request.url.split('?')[0]
     const key = `${request.method} ${path}`
     if (PUBLIC_ROUTES.has(key)) return
-    if (path.startsWith('/admin/')) return
+    if (process.env.ENABLE_ADMIN === 'true' && path.startsWith('/admin/')) return
     if (request.method === 'GET' && path.startsWith('/auth/invite/')) return
     if (path.startsWith('/proxy/')) return
 
@@ -126,7 +125,13 @@ async function start() {
   fastify.register(notificationsRoutes, { prefix: '/notifications' })
   fastify.register(integrationsRoutes, { prefix: '/integrations' })
   fastify.register(analyticsRoutes, { prefix: '/analytics' })
-  fastify.register(adminRoutes, { prefix: '/admin' })
+  if (process.env.ENABLE_ADMIN === 'true') {
+    const { default: adminRoutes } = await import('./routes/admin.js')
+    await fastify.register(adminRoutes, { prefix: '/admin' })
+    fastify.log.info('Admin routes enabled')
+  } else {
+    fastify.log.info('Admin routes disabled')
+  }
 
   fastify.get('/health', async () => ({ status: 'ok', ts: Date.now() }))
   fastify.post('/tunnel/token', async (request, reply) => {
