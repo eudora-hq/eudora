@@ -13,6 +13,12 @@ Self-hosted. MIT licensed.
 [![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
 [![Tests](https://img.shields.io/badge/tests-417%20passing-brightgreen)](.github/workflows/ci.yml)
 [![Self-hostable](https://img.shields.io/badge/self--host-free%20forever-blue)](docs/self-hosting.md)
+![Node.js](https://img.shields.io/badge/node-22-339933?logo=node.js&logoColor=white)
+![React](https://img.shields.io/badge/react-18-61DAFB?logo=react&logoColor=black)
+![TypeScript](https://img.shields.io/badge/typescript-blue?logo=typescript)
+![OpenAI](https://img.shields.io/badge/OpenAI-supported-black?logo=openai)
+![Anthropic](https://img.shields.io/badge/Anthropic-supported-orange)
+![Ollama](https://img.shields.io/badge/Ollama-supported-000000)
 
 </div>
 
