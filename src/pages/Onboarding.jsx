@@ -280,16 +280,33 @@ function StepOne({ setStep, setApiKey }) {
         </div>
 
         {needsBaseUrl && (
-  <div className="space-y-2">
-    <label className="font-mono text-[10px] text-primary uppercase tracking-[0.15em] block">Model Name</label>
-    <input
-      type="text"
-      value={modelName}
-      onChange={(e) => { setModelName(e.target.value); resetSavedKey(); }}
-      placeholder={provider === 'ollama' ? 'qwen2.5-coder:14b' : 'default'}
-      className="w-full bg-[#050505] border border-[#262626] text-white px-4 py-3 focus:outline-none focus:border-primary focus:ring-1 focus:ring-primary/20 transition-all font-mono text-[13px]"
-    />
-    <p className="font-mono text-[10px] text-text-muted">Exact model name (e.g. qwen2.5-coder:14b, llama3, mistral)</p>
+  <div className="space-y-4">
+    <div className="space-y-2">
+      <label className="font-mono text-[10px] text-primary uppercase tracking-[0.15em] block">Base URL</label>
+      <input
+        type="text"
+        value={baseUrl}
+        onChange={(e) => { setBaseUrl(e.target.value); resetSavedKey(); }}
+        placeholder={provider === 'ollama' ? 'http://localhost:11434' : 'https://your-endpoint.com'}
+        className="w-full bg-[#050505] border border-[#262626] text-white px-4 py-3 focus:outline-none focus:border-primary focus:ring-1 focus:ring-primary/20 transition-all font-mono text-[13px]"
+      />
+      {provider === 'ollama' && (
+        <p className="font-mono text-[10px] text-text-muted">
+          Local: http://localhost:11434 · Network: http://192.168.x.x:11434 · Cloud users: use Eudora Tunnel
+        </p>
+      )}
+    </div>
+    <div className="space-y-2">
+      <label className="font-mono text-[10px] text-primary uppercase tracking-[0.15em] block">Model Name</label>
+      <input
+        type="text"
+        value={modelName}
+        onChange={(e) => { setModelName(e.target.value); resetSavedKey(); }}
+        placeholder={provider === 'ollama' ? 'qwen2.5-coder:14b' : 'default'}
+        className="w-full bg-[#050505] border border-[#262626] text-white px-4 py-3 focus:outline-none focus:border-primary focus:ring-1 focus:ring-primary/20 transition-all font-mono text-[13px]"
+      />
+      <p className="font-mono text-[10px] text-text-muted">Exact model name (e.g. qwen2.5-coder:14b, llama3, mistral)</p>
+    </div>
   </div>
 )}
 
