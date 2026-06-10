@@ -9,10 +9,10 @@ const MODES = [
 ]
 
 const SECTORS = [
-  { value: 'general', label: 'GENERAL' },
-  { value: 'healthcare', label: 'HEALTHCARE' },
-  { value: 'financial', label: 'FINANCIAL SERVICES' },
-  { value: 'hr_legal', label: 'HR / LEGAL' },
+  { value: 'general', label: 'GENERAL', name: 'General (EU AI Act Article 50)', retentionYears: 3 },
+  { value: 'healthcare', label: 'HEALTHCARE', name: 'Healthcare (EU AI Act + HIPAA-aligned)', retentionYears: 10 },
+  { value: 'financial', label: 'FINANCIAL SERVICES', name: 'Financial Services (EU AI Act + DORA + MiFID II)', retentionYears: 7 },
+  { value: 'hr_legal', label: 'HR / LEGAL', name: 'HR / Legal (EU AI Act Article 50)', retentionYears: 5 },
 ]
 
 export default function Compliance() {
@@ -26,6 +26,7 @@ export default function Compliance() {
   const [generating, setGenerating] = useState(false)
   const [verification, setVerification] = useState(null)
   const [verificationLoading, setVerificationLoading] = useState(false)
+  const [selectedRecord, setSelectedRecord] = useState(null)
   const [reportForm, setReportForm] = useState({
     agentId: '',
     mode: 'flagged',
@@ -240,6 +241,7 @@ export default function Compliance() {
           agentNames={agentNames}
           filters={filters}
           setFilters={setFilters}
+          onSelect={setSelectedRecord}
         />
       )}
 
@@ -274,6 +276,14 @@ export default function Compliance() {
             </pre>
           </div>
         </div>
+      )}
+
+      {selectedRecord && (
+        <Article50RecordModal
+          record={selectedRecord}
+          agentName={agentNames[selectedRecord.agent_id] || selectedRecord.agent_id}
+          onClose={() => setSelectedRecord(null)}
+        />
       )}
     </div>
   )
@@ -341,7 +351,7 @@ function ReportsTable({ reports, agentNames, onVerify, onDownloadPdf, onDownload
   )
 }
 
-function Article50Records({ records, agents, agentNames, filters, setFilters }) {
+function Article50Records({ records, agents, agentNames, filters, setFilters, onSelect }) {
   return (
     <div className="space-y-4">
       <div className="border border-[#262626] bg-[#0a0a0a] p-5 grid grid-cols-1 md:grid-cols-4 gap-4">
@@ -390,7 +400,18 @@ function Article50Records({ records, agents, agentNames, filters, setFilters }) 
                 </td>
               </tr>
             ) : records.map(record => (
-              <tr key={record.id} className="border-b border-[#1a1a1a] last:border-0 align-top">
+              <tr
+                key={record.id}
+                tabIndex={0}
+                onClick={() => onSelect(record)}
+                onKeyDown={event => {
+                  if (event.key === 'Enter' || event.key === ' ') {
+                    event.preventDefault()
+                    onSelect(record)
+                  }
+                }}
+                className="border-b border-[#1a1a1a] last:border-0 align-top cursor-pointer transition-colors hover:bg-white/[0.02] focus:bg-white/[0.02] focus:outline-none"
+              >
                 <td className="px-5 py-4 font-mono text-[10px] text-white">{formatDate(record.interaction_timestamp)}</td>
                 <td className="px-5 py-4 font-mono text-[10px] text-text-muted">
                   {agentNames[record.agent_id] || record.agent_id}
@@ -423,6 +444,84 @@ function Article50Records({ records, agents, agentNames, filters, setFilters }) 
           </tbody>
         </table>
       </section>
+    </div>
+  )
+}
+
+function Article50RecordModal({ record, agentName, onClose }) {
+  const sector = sectorMetadata(record.sector_template)
+  const regulations = parseRegulations(record.regulation_refs)
+
+  return (
+    <div className="fixed inset-0 z-50 bg-black/75 flex items-center justify-center p-6" onClick={onClose}>
+      <div
+        className="w-full max-w-2xl max-h-[85vh] overflow-y-auto border border-[#262626] bg-[#0a0a0a]"
+        onClick={event => event.stopPropagation()}
+      >
+        <div className="flex items-start justify-between gap-4 px-5 py-4 border-b border-[#262626]">
+          <div>
+            <p className="font-mono text-[10px] text-primary uppercase tracking-widest">Article 50 Record</p>
+            <p className="font-mono text-[9px] text-text-muted mt-1 break-all">{record.id}</p>
+          </div>
+          <button
+            type="button"
+            title="Close"
+            onClick={onClose}
+            className="material-symbols-outlined text-text-muted hover:text-white text-[20px] cursor-pointer"
+          >
+            close
+          </button>
+        </div>
+
+        <div className="px-5 py-3">
+          <RecordDetail label="Record ID" value={record.id} />
+          <RecordDetail label="Timestamp" value={formatIsoDate(record.interaction_timestamp)} />
+          <RecordDetail label="Agent" value={agentName || 'Unknown agent'} />
+          <RecordDetail label="Sector Template" value={sector.name} />
+          <RecordDetail
+            label="Regulations"
+            value={regulations.length ? (
+              <div className="space-y-1">
+                {regulations.map(regulation => <p key={regulation}>{regulation}</p>)}
+              </div>
+            ) : '—'}
+          />
+          <RecordDetail
+            label="Disclosure Made"
+            value={
+              <span className={record.disclosure_made ? 'text-primary' : 'text-red-400'}>
+                {record.disclosure_made ? 'YES' : 'NO'}
+              </span>
+            }
+          />
+          <RecordDetail label="Disclosure Method" value={record.disclosure_method || '—'} />
+          <RecordDetail
+            label="Output Summary"
+            value={
+              <p className="whitespace-pre-wrap break-words">
+                {record.output_summary || 'No output summary recorded.'}
+              </p>
+            }
+          />
+          <RecordDetail label="Risk Score" value={<RiskBadge score={record.risk_score} />} />
+          <RecordDetail label="Retention" value={`${sector.retentionYears} years`} />
+        </div>
+
+        <div className="px-5 py-3 border-t border-[#262626]">
+          <p className="font-mono text-[9px] text-text-muted/60">
+            Single-record PDF certificates are planned for a future release.
+          </p>
+        </div>
+      </div>
+    </div>
+  )
+}
+
+function RecordDetail({ label, value }) {
+  return (
+    <div className="grid grid-cols-[150px_minmax(0,1fr)] gap-4 py-3 border-b border-[#1a1a1a] last:border-0">
+      <span className="font-mono text-[9px] text-text-muted uppercase tracking-widest">{label}</span>
+      <div className="font-mono text-[11px] text-white min-w-0 break-words">{value ?? '—'}</div>
     </div>
   )
 }
@@ -563,13 +662,39 @@ function modeLabel(mode) {
 }
 
 function sectorLabel(sector) {
-  return SECTORS.find(item => item.value === sector)?.label || String(sector || 'general').toUpperCase()
+  return sectorMetadata(sector).label
+}
+
+function sectorMetadata(sector) {
+  return SECTORS.find(item => item.value === sector) || {
+    label: String(sector || 'general').replaceAll('_', ' ').toUpperCase(),
+    name: String(sector || 'general').replaceAll('_', ' '),
+    retentionYears: 3,
+  }
+}
+
+function parseRegulations(regulations) {
+  if (Array.isArray(regulations)) return regulations
+  if (!regulations) return []
+  try {
+    const parsed = JSON.parse(regulations)
+    return Array.isArray(parsed) ? parsed : []
+  } catch {
+    return []
+  }
+}
+
+function formatIsoDate(value) {
+  if (!value) return '—'
+  const date = new Date(value)
+  return Number.isNaN(date.getTime()) ? value : date.toISOString()
 }
 
 function regulationsLabel(regulations) {
-  if (!Array.isArray(regulations) || regulations.length === 0) return '—'
-  const visible = regulations.slice(0, 2).join(', ')
-  return regulations.length > 2 ? `${visible} +${regulations.length - 2} more` : visible
+  const parsed = parseRegulations(regulations)
+  if (parsed.length === 0) return '—'
+  const visible = parsed.slice(0, 2).join(', ')
+  return parsed.length > 2 ? `${visible} +${parsed.length - 2} more` : visible
 }
 
 function RiskBadge({ score }) {
