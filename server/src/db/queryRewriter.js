@@ -50,6 +50,7 @@ export function transformSqliteDdl(sql) {
   let transformed = sql
     .replace(/^\s*PRAGMA\b[^;]*;?/gim, '')
     .replace(/\bINTEGER\s+PRIMARY\s+KEY\s+AUTOINCREMENT\b/gi, 'SERIAL PRIMARY KEY')
+    .replace(/\bINTEGER\b/gi, 'BIGINT')
     .replace(/\bREAL\b/gi, 'DOUBLE PRECISION')
     .replace(/\bBLOB\b/gi, 'BYTEA')
     .replace(/\(datetime\('now'\)\)/gi, '(NOW()::text)')
@@ -57,12 +58,12 @@ export function transformSqliteDdl(sql) {
 
   transformed = transformed.replace(
     /CREATE TRIGGER IF NOT EXISTS audit_log_no_update[\s\S]*?END;/gi,
-    `CREATE OR REPLACE FUNCTION prevent_audit_log_update()
-RETURNS trigger AS $$
+    () => `CREATE OR REPLACE FUNCTION prevent_audit_log_update()
+RETURNS trigger LANGUAGE plpgsql AS $fn_no_update$
 BEGIN
   RAISE EXCEPTION 'audit_log is append-only: UPDATE not permitted';
 END;
-$$ LANGUAGE plpgsql;
+$fn_no_update$;
 DROP TRIGGER IF EXISTS audit_log_no_update ON audit_log;
 CREATE TRIGGER audit_log_no_update
 BEFORE UPDATE ON audit_log
@@ -71,12 +72,12 @@ FOR EACH ROW EXECUTE FUNCTION prevent_audit_log_update();`
 
   transformed = transformed.replace(
     /CREATE TRIGGER IF NOT EXISTS audit_log_no_delete[\s\S]*?END;/gi,
-    `CREATE OR REPLACE FUNCTION prevent_audit_log_delete()
-RETURNS trigger AS $$
+    () => `CREATE OR REPLACE FUNCTION prevent_audit_log_delete()
+RETURNS trigger LANGUAGE plpgsql AS $fn_no_delete$
 BEGIN
   RAISE EXCEPTION 'audit_log is append-only: DELETE not permitted';
 END;
-$$ LANGUAGE plpgsql;
+$fn_no_delete$;
 DROP TRIGGER IF EXISTS audit_log_no_delete ON audit_log;
 CREATE TRIGGER audit_log_no_delete
 BEFORE DELETE ON audit_log
