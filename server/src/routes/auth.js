@@ -22,8 +22,9 @@ function isValidEmail(email) {
   return typeof email === 'string' && /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)
 }
 
-function hasColumn(db, table, column) {
-  return db.prepare(`PRAGMA table_info(${table})`).all().some((item) => item.name === column)
+async function hasColumn(db, table, column) {
+  const columns = await db.all(`PRAGMA table_info(${table})`)
+  return columns.some((item) => item.name === column)
 }
 
 function oauthCallbackUrl(provider) {
@@ -51,7 +52,7 @@ async function findOrCreateOAuthUser({ email, name, provider, providerId, db }) 
   if (!isValidEmail(email)) throw new Error('OAuth provider did not return a valid email')
 
   const normalisedEmail = email.trim().toLowerCase()
-  let user = db.prepare('SELECT * FROM users WHERE LOWER(email) = ?').get(normalisedEmail)
+  let user = await db.get('SELECT * FROM users WHERE LOWER(email) = ?', [normalisedEmail])
 
   if (!user) {
     const userId = nanoid()
@@ -60,30 +61,28 @@ async function findOrCreateOAuthUser({ email, name, provider, providerId, db }) 
     const displayName = name?.trim() || normalisedEmail.split('@')[0]
 
     db.transaction(() => {
-      db.prepare(`
+      await db.query(`
         INSERT INTO tenants (id, name, plan, trial_ends_at, created_at)
         VALUES (?, ?, 'trial', ?, ?)
-      `).run(
-        tenantId,
+      `, [tenantId,
         `${displayName}'s workspace`,
         now + 14 * 24 * 60 * 60 * 1000,
-        now
-      )
+        now])
 
       if (hasColumn(db, 'users', 'name')) {
-        db.prepare(`
+        await db.query(`
           INSERT INTO users (
             id, tenant_id, email, name, password_hash, role, onboarding_completed
           )
           VALUES (?, ?, ?, ?, '', 'owner', 0)
-        `).run(userId, tenantId, normalisedEmail, displayName)
+        `, [userId, tenantId, normalisedEmail, displayName])
       } else {
-        db.prepare(`
+        await db.query(`
           INSERT INTO users (
             id, tenant_id, email, password_hash, role, onboarding_completed
           )
           VALUES (?, ?, ?, '', 'owner', 0)
-        `).run(userId, tenantId, normalisedEmail)
+        `, [userId, tenantId, normalisedEmail])
       }
     })()
 
@@ -91,10 +90,10 @@ async function findOrCreateOAuthUser({ email, name, provider, providerId, db }) 
     sendWelcomeEmail({ to: normalisedEmail, name: displayName }).catch((error) => {
       console.error('[email] Welcome email failed:', error.message)
     })
-    user = db.prepare('SELECT * FROM users WHERE id = ?').get(userId)
+    user = await db.get('SELECT * FROM users WHERE id = ?', [userId])
   }
 
-  const tenant = db.prepare('SELECT * FROM tenants WHERE id = ?').get(user.tenant_id)
+  const tenant = await db.get('SELECT * FROM tenants WHERE id = ?', [user.tenant_id])
   const accessToken = generateAccessToken({
     userId: user.id,
     tenantId: user.tenant_id,
@@ -102,12 +101,12 @@ async function findOrCreateOAuthUser({ email, name, provider, providerId, db }) 
   })
   const { raw, hashed } = generateRefreshToken()
   const now = Date.now()
-  db.prepare(`
+  await db.query(`
     INSERT INTO refresh_tokens (id, user_id, token_hash, expires_at, created_at)
     VALUES (?, ?, ?, ?, ?)
-  `).run(nanoid(), user.id, hashed, now + 30 * 24 * 60 * 60 * 1000, now)
+  `, [nanoid(), user.id, hashed, now + 30 * 24 * 60 * 60 * 1000, now])
 
-  db.prepare('UPDATE users SET last_login = ? WHERE id = ?').run(now, user.id)
+  await db.query('UPDATE users SET last_login = ? WHERE id = ?', [now, user.id])
 
   // Provider identifiers are intentionally not persisted until a dedicated
   // linked-identities table is introduced.
@@ -133,26 +132,26 @@ export default async function authRoutes(fastify) {
       return reply.code(400).send({ error: 'validation_error', details: 'password must be at least 8 characters' })
     }
 
-    const existing = db.prepare('SELECT id FROM users WHERE email = ?').get(email)
+    const existing = await db.get('SELECT id FROM users WHERE email = ?', [email])
     if (existing) {
       return reply.code(409).send({ error: 'email_already_registered' })
     }
 
     const tenantId = nanoid()
-    db.prepare(
+    await db.query(
       'INSERT INTO tenants (id, name, plan, trial_ends_at, created_at) VALUES (?, ?, ?, ?, ?)'
-    ).run(tenantId, name.trim(), 'trial', Date.now() + 14 * 24 * 60 * 60 * 1000, Date.now())
+    , [tenantId, name.trim(), 'trial', Date.now() + 14 * 24 * 60 * 60 * 1000, Date.now()])
 
     const passwordHash = await hashPassword(password)
     const userId = nanoid()
     if (hasColumn(db, 'users', 'name')) {
-      db.prepare(
+      await db.query(
         'INSERT INTO users (id, tenant_id, email, name, password_hash, role, onboarding_completed) VALUES (?, ?, ?, ?, ?, ?, ?)'
-      ).run(userId, tenantId, email.toLowerCase(), name.trim(), passwordHash, 'owner', 0)
+      , [userId, tenantId, email.toLowerCase(), name.trim(), passwordHash, 'owner', 0])
     } else {
-      db.prepare(
+      await db.query(
         'INSERT INTO users (id, tenant_id, email, password_hash, role, onboarding_completed) VALUES (?, ?, ?, ?, ?, ?)'
-      ).run(userId, tenantId, email.toLowerCase(), passwordHash, 'owner', 0)
+      , [userId, tenantId, email.toLowerCase(), passwordHash, 'owner', 0])
     }
 
     seedFeatureFlags(db, tenantId, 'trial')
@@ -166,7 +165,7 @@ export default async function authRoutes(fastify) {
   fastify.post('/auth/login', async (request, reply) => {
     const { email, password, mfaCode } = request.body || {}
 
-    const user = db.prepare('SELECT * FROM users WHERE email = ?').get(email)
+    const user = await db.get('SELECT * FROM users WHERE email = ?', [email])
     if (!user) {
       return reply.code(401).send({ error: 'invalid_credentials' })
     }
@@ -195,8 +194,8 @@ export default async function authRoutes(fastify) {
       }
     }
 
-    db.prepare('UPDATE users SET last_login = ? WHERE id = ?').run(Date.now(), user.id)
-    const tenant = db.prepare('SELECT plan, trial_ends_at FROM tenants WHERE id = ?').get(user.tenant_id)
+    await db.query('UPDATE users SET last_login = ? WHERE id = ?', [Date.now(), user.id])
+    const tenant = await db.get('SELECT plan, trial_ends_at FROM tenants WHERE id = ?', [user.tenant_id])
 
     const accessToken = generateAccessToken({
       userId: user.id,
@@ -204,9 +203,9 @@ export default async function authRoutes(fastify) {
       role: user.role,
     })
     const { raw, hashed } = generateRefreshToken()
-    db.prepare(
+    await db.query(
       'INSERT INTO refresh_tokens (id, user_id, token_hash, expires_at, created_at) VALUES (?, ?, ?, ?, ?)'
-    ).run(nanoid(), user.id, hashed, Date.now() + 7 * 24 * 60 * 60 * 1000, Date.now())
+    , [nanoid(), user.id, hashed, Date.now() + 7 * 24 * 60 * 60 * 1000, Date.now()])
 
     return reply.code(200).send({
       accessToken,
@@ -224,7 +223,7 @@ export default async function authRoutes(fastify) {
   })
 
   fastify.get('/auth/mfa/status', { preHandler: authenticate }, async (request, reply) => {
-    const user = db.prepare('SELECT mfa_secret FROM users WHERE id = ?').get(request.user.userId)
+    const user = await db.get('SELECT mfa_secret FROM users WHERE id = ?', [request.user.userId])
     if (!user) return reply.code(404).send({ error: 'user_not_found' })
 
     return reply.send({
@@ -234,7 +233,7 @@ export default async function authRoutes(fastify) {
   })
 
   fastify.post('/auth/mfa/setup', { preHandler: authenticate }, async (request, reply) => {
-    const user = db.prepare('SELECT id, email FROM users WHERE id = ?').get(request.user.userId)
+    const user = await db.get('SELECT id, email FROM users WHERE id = ?', [request.user.userId])
     if (!user) return reply.code(404).send({ error: 'user_not_found' })
 
     const secret = generateSecret()
@@ -245,15 +244,14 @@ export default async function authRoutes(fastify) {
     })
     const qrDataUrl = await QRCode.toDataURL(otpauth)
 
-    db.prepare('UPDATE users SET mfa_secret = ? WHERE id = ?')
-      .run(`pending:${secret}`, request.user.userId)
+    await db.query('UPDATE users SET mfa_secret = ? WHERE id = ?', [`pending:${secret}`, request.user.userId])
 
     return reply.send({ secret, qrDataUrl, otpauth })
   })
 
   fastify.post('/auth/mfa/verify', { preHandler: authenticate }, async (request, reply) => {
     const { code } = request.body || {}
-    const user = db.prepare('SELECT mfa_secret FROM users WHERE id = ?').get(request.user.userId)
+    const user = await db.get('SELECT mfa_secret FROM users WHERE id = ?', [request.user.userId])
 
     if (!user?.mfa_secret?.startsWith('pending:')) {
       return reply.code(400).send({ error: 'no_pending_setup' })
@@ -282,14 +280,13 @@ export default async function authRoutes(fastify) {
       })
     }
 
-    db.prepare('UPDATE users SET mfa_secret = ? WHERE id = ?')
-      .run(secret, request.user.userId)
+    await db.query('UPDATE users SET mfa_secret = ? WHERE id = ?', [secret, request.user.userId])
     return reply.send({ enabled: true })
   })
 
   fastify.post('/auth/mfa/disable', { preHandler: authenticate }, async (request, reply) => {
     const { code } = request.body || {}
-    const user = db.prepare('SELECT mfa_secret FROM users WHERE id = ?').get(request.user.userId)
+    const user = await db.get('SELECT mfa_secret FROM users WHERE id = ?', [request.user.userId])
 
     if (!user?.mfa_secret || user.mfa_secret.startsWith('pending:')) {
       return reply.code(400).send({ error: 'mfa_not_enabled' })
@@ -309,7 +306,7 @@ export default async function authRoutes(fastify) {
       return reply.code(400).send({ error: 'invalid_code' })
     }
 
-    db.prepare('UPDATE users SET mfa_secret = NULL WHERE id = ?').run(request.user.userId)
+    await db.query('UPDATE users SET mfa_secret = NULL WHERE id = ?', [request.user.userId])
     return reply.send({ disabled: true })
   })
 
@@ -320,7 +317,7 @@ export default async function authRoutes(fastify) {
     }
 
     const normalisedEmail = String(email).trim().toLowerCase()
-    const user = db.prepare('SELECT * FROM users WHERE LOWER(email) = ?').get(normalisedEmail)
+    const user = await db.get('SELECT * FROM users WHERE LOWER(email) = ?', [normalisedEmail])
     const message = 'If that email exists, a reset link has been sent.'
 
     if (!user) {
@@ -376,20 +373,20 @@ export default async function authRoutes(fastify) {
     }
 
     const passwordHash = await hashPassword(password)
-    db.prepare('UPDATE users SET password_hash = ? WHERE id = ?').run(passwordHash, record.userId)
-    db.prepare('DELETE FROM refresh_tokens WHERE user_id = ?').run(record.userId)
+    await db.query('UPDATE users SET password_hash = ? WHERE id = ?', [passwordHash, record.userId])
+    await db.query('DELETE FROM refresh_tokens WHERE user_id = ?', [record.userId])
     resetTokens.delete(token)
 
     return reply.send({ message: 'Password updated successfully.' })
   })
 
   fastify.get('/auth/invite/:token', async (request, reply) => {
-    const invite = db.prepare(`
+    const invite = await db.get(`
       SELECT i.*, t.name AS tenant_name
       FROM invites i
       JOIN tenants t ON t.id = i.tenant_id
       WHERE i.token = ? AND i.status = 'pending' AND i.expires_at > ?
-    `).get(request.params.token, Date.now())
+    `, [request.params.token, Date.now()])
 
     if (!invite) {
       return reply.code(404).send({
@@ -416,11 +413,11 @@ export default async function authRoutes(fastify) {
       return reply.code(400).send({ error: 'password_too_short' })
     }
 
-    const invite = db.prepare(`
+    const invite = await db.get(`
       SELECT *
       FROM invites
       WHERE token = ? AND status = 'pending' AND expires_at > ?
-    `).get(token, Date.now())
+    `, [token, Date.now()])
 
     if (!invite) {
       return reply.code(404).send({
@@ -445,29 +442,26 @@ export default async function authRoutes(fastify) {
     const { raw, hashed } = generateRefreshToken()
 
     db.transaction(() => {
-      db.prepare(`
+      await db.query(`
         INSERT INTO users (
           id, tenant_id, email, name, password_hash, role, onboarding_completed
         )
         VALUES (?, ?, ?, ?, ?, ?, 1)
-      `).run(
-        userId,
+      `, [userId,
         invite.tenant_id,
         invite.email,
         name.trim(),
         passwordHash,
-        invite.role
-      )
+        invite.role])
 
-      db.prepare('UPDATE invites SET status = ?, accepted_at = ? WHERE id = ?')
-        .run('accepted', now, invite.id)
+      await db.query('UPDATE invites SET status = ?, accepted_at = ? WHERE id = ?', ['accepted', now, invite.id])
 
-      db.prepare(`
+      await db.query(`
         INSERT INTO refresh_tokens (
           id, user_id, token_hash, expires_at, created_at
         )
         VALUES (?, ?, ?, ?, ?)
-      `).run(nanoid(), userId, hashed, now + 30 * 24 * 60 * 60 * 1000, now)
+      `, [nanoid(), userId, hashed, now + 30 * 24 * 60 * 60 * 1000, now])
     })()
 
     const tenant = db
@@ -478,13 +472,13 @@ export default async function authRoutes(fastify) {
       tenantId: invite.tenant_id,
       role: invite.role,
     })
-    const owner = db.prepare(`
+    const owner = await db.get(`
       SELECT id
       FROM users
       WHERE tenant_id = ? AND role = 'owner'
       ORDER BY rowid ASC
       LIMIT 1
-    `).get(invite.tenant_id)
+    `, [invite.tenant_id])
     createNotification(db, {
       tenantId: invite.tenant_id,
       userId: owner?.id || null,
@@ -518,7 +512,7 @@ export default async function authRoutes(fastify) {
     }
 
     const hashed = hashRefreshToken(refreshToken)
-    const stored = db.prepare('SELECT * FROM refresh_tokens WHERE token_hash = ?').get(hashed)
+    const stored = await db.get('SELECT * FROM refresh_tokens WHERE token_hash = ?', [hashed])
 
     if (!stored) {
       return reply.code(401).send({ error: 'invalid_refresh_token' })
@@ -528,18 +522,18 @@ export default async function authRoutes(fastify) {
       return reply.code(401).send({ error: 'refresh_token_expired' })
     }
 
-    db.prepare('DELETE FROM refresh_tokens WHERE id = ?').run(stored.id)
+    await db.query('DELETE FROM refresh_tokens WHERE id = ?', [stored.id])
 
-    const user = db.prepare('SELECT * FROM users WHERE id = ?').get(stored.user_id)
+    const user = await db.get('SELECT * FROM users WHERE id = ?', [stored.user_id])
     const accessToken = generateAccessToken({
       userId: user.id,
       tenantId: user.tenant_id,
       role: user.role,
     })
     const { raw: newRaw, hashed: newHashed } = generateRefreshToken()
-    db.prepare(
+    await db.query(
       'INSERT INTO refresh_tokens (id, user_id, token_hash, expires_at, created_at) VALUES (?, ?, ?, ?, ?)'
-    ).run(nanoid(), user.id, newHashed, Date.now() + 7 * 24 * 60 * 60 * 1000, Date.now())
+    , [nanoid(), user.id, newHashed, Date.now() + 7 * 24 * 60 * 60 * 1000, Date.now()])
 
     return reply.code(200).send({ accessToken, refreshToken: newRaw })
   })
@@ -547,7 +541,7 @@ export default async function authRoutes(fastify) {
   fastify.post('/auth/logout', async (request, reply) => {
     const { refreshToken } = request.body || {}
     if (refreshToken) {
-      db.prepare('DELETE FROM refresh_tokens WHERE token_hash = ?').run(hashRefreshToken(refreshToken))
+      await db.query('DELETE FROM refresh_tokens WHERE token_hash = ?', [hashRefreshToken(refreshToken)])
     }
     return reply.code(200).send({ success: true })
   })
@@ -695,15 +689,13 @@ export default async function authRoutes(fastify) {
     const { userId } = request.user
 
     if (onboarding_completed !== undefined) {
-      db.prepare('UPDATE users SET onboarding_completed = ? WHERE id = ?').run(
-        onboarding_completed ? 1 : 0,
-        userId
-      )
+      await db.query('UPDATE users SET onboarding_completed = ? WHERE id = ?', [onboarding_completed ? 1 : 0,
+        userId])
     }
     if (typeof name === 'string' && name.trim()) {
-      db.prepare('UPDATE tenants SET name = ? WHERE id = ?').run(name.trim(), request.tenantId)
+      await db.query('UPDATE tenants SET name = ? WHERE id = ?', [name.trim(), request.tenantId])
       if (hasColumn(db, 'users', 'name')) {
-        db.prepare('UPDATE users SET name = ? WHERE id = ?').run(name.trim(), userId)
+        await db.query('UPDATE users SET name = ? WHERE id = ?', [name.trim(), userId])
       }
     }
 
@@ -786,7 +778,7 @@ export default async function authRoutes(fastify) {
       .get(tenantId)
 
     if (existing) {
-      db.prepare(`
+      await db.query(`
         UPDATE api_keys
            SET oauth_access_token_encrypted = ?,
                oauth_access_token_iv = ?,
@@ -795,22 +787,20 @@ export default async function authRoutes(fastify) {
                oauth_expires_at = ?,
                oauth_scope = ?
          WHERE id = ?
-      `).run(accessCt, accessIv, refreshCt, refreshIv, oauthExpiresAt, scope ?? null, existing.id)
+      `, [accessCt, accessIv, refreshCt, refreshIv, oauthExpiresAt, scope ?? null, existing.id])
     } else {
-      db.prepare(`
+      await db.query(`
         INSERT INTO api_keys
           (id, tenant_id, user_id, provider, auth_type, label,
            oauth_access_token_encrypted, oauth_access_token_iv,
            oauth_refresh_token_encrypted, oauth_refresh_token_iv,
            oauth_expires_at, oauth_scope, created_at)
         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-      `).run(
-        nanoid(), tenantId, userId,
+      `, [nanoid(), tenantId, userId,
         'openai_oauth', 'oauth', 'ChatGPT Subscription',
         accessCt, accessIv, refreshCt, refreshIv,
         oauthExpiresAt, scope ?? null,
-        Date.now()
-      )
+        Date.now()])
     }
 
     return reply.redirect(`${clientUrl}/settings/api-keys?connected=openai`)

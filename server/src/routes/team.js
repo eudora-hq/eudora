@@ -22,21 +22,21 @@ export default async function teamRoutes(fastify) {
   const db = fastify.db
 
   fastify.get('/', async (request) => {
-    const members = db.prepare(`
+    const members = await db.all(`
       SELECT id, email, name, role, last_login, onboarding_completed
       FROM users
       WHERE tenant_id = ?
       ORDER BY rowid ASC
-    `).all(request.tenantId)
+    `, [request.tenantId])
 
-    const invites = db.prepare(`
+    const invites = await db.all(`
       SELECT id, email, role, status, expires_at, created_at
       FROM invites
       WHERE tenant_id = ? AND status = 'pending' AND expires_at > ?
       ORDER BY created_at DESC
-    `).all(request.tenantId, Date.now())
+    `, [request.tenantId, Date.now()])
 
-    const tenant = db.prepare('SELECT plan FROM tenants WHERE id = ?').get(request.tenantId)
+    const tenant = await db.get('SELECT plan FROM tenants WHERE id = ?', [request.tenantId])
     const seatLimit = process.env.SELF_HOSTED === 'true'
       ? Infinity
       : TIER_LIMITS[tenant?.plan || 'trial']?.seats ?? 1
@@ -66,7 +66,7 @@ export default async function teamRoutes(fastify) {
       })
     }
 
-    const tenant = db.prepare('SELECT * FROM tenants WHERE id = ?').get(request.tenantId)
+    const tenant = await db.get('SELECT * FROM tenants WHERE id = ?', [request.tenantId])
     const seatLimit = process.env.SELF_HOSTED === 'true'
       ? Infinity
       : TIER_LIMITS[tenant?.plan || 'trial']?.seats ?? 1
@@ -75,11 +75,11 @@ export default async function teamRoutes(fastify) {
       const memberCount = db
         .prepare('SELECT COUNT(*) AS count FROM users WHERE tenant_id = ?')
         .get(request.tenantId).count
-      const pendingCount = db.prepare(`
+      const pendingCount = await db.get(`
         SELECT COUNT(*) AS count
         FROM invites
         WHERE tenant_id = ? AND status = 'pending' AND expires_at > ?
-      `).get(request.tenantId, Date.now()).count
+      `, [request.tenantId, Date.now()]).count
 
       if (memberCount + pendingCount >= seatLimit) {
         return reply.code(403).send({
@@ -100,11 +100,11 @@ export default async function teamRoutes(fastify) {
       })
     }
 
-    const existingInvite = db.prepare(`
+    const existingInvite = await db.get(`
       SELECT id
       FROM invites
       WHERE LOWER(email) = ? AND tenant_id = ? AND status = 'pending' AND expires_at > ?
-    `).get(normalisedEmail, request.tenantId, Date.now())
+    `, [normalisedEmail, request.tenantId, Date.now()])
     if (existingInvite) {
       return reply.code(409).send({
         error: 'already_invited',
@@ -117,21 +117,19 @@ export default async function teamRoutes(fastify) {
     const expiresAt = Date.now() + 7 * 24 * 60 * 60 * 1000
     const createdAt = Date.now()
 
-    db.prepare(`
+    await db.query(`
       INSERT INTO invites (
         id, tenant_id, invited_by, email, role, token, status, expires_at, created_at
       )
       VALUES (?, ?, ?, ?, ?, ?, 'pending', ?, ?)
-    `).run(
-      inviteId,
+    `, [inviteId,
       request.tenantId,
       request.user.userId,
       normalisedEmail,
       role,
       token,
       expiresAt,
-      createdAt
-    )
+      createdAt])
 
     const inviter = db
       .prepare('SELECT name, email FROM users WHERE id = ?')
@@ -166,8 +164,7 @@ export default async function teamRoutes(fastify) {
       .get(request.params.id, request.tenantId)
     if (!invite) return reply.code(404).send({ error: 'not_found' })
 
-    db.prepare('UPDATE invites SET status = ? WHERE id = ?')
-      .run('cancelled', request.params.id)
+    await db.query('UPDATE invites SET status = ? WHERE id = ?', ['cancelled', request.params.id])
     return reply.send({ cancelled: true })
   })
 
@@ -194,9 +191,8 @@ export default async function teamRoutes(fastify) {
     }
 
     db.transaction(() => {
-      db.prepare('DELETE FROM refresh_tokens WHERE user_id = ?').run(userId)
-      db.prepare('DELETE FROM users WHERE id = ? AND tenant_id = ?')
-        .run(userId, request.tenantId)
+      await db.query('DELETE FROM refresh_tokens WHERE user_id = ?', [userId])
+      await db.query('DELETE FROM users WHERE id = ? AND tenant_id = ?', [userId, request.tenantId])
     })()
 
     return reply.send({ removed: true })
@@ -218,8 +214,7 @@ export default async function teamRoutes(fastify) {
       return reply.code(403).send({ error: 'cannot_change_owner_role' })
     }
 
-    db.prepare('UPDATE users SET role = ? WHERE id = ? AND tenant_id = ?')
-      .run(role, request.params.userId, request.tenantId)
+    await db.query('UPDATE users SET role = ? WHERE id = ? AND tenant_id = ?', [role, request.params.userId, request.tenantId])
 
     return reply.send({ role })
   })

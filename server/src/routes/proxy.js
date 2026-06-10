@@ -78,12 +78,12 @@ export default async function proxyRoutes(fastify) {
     }
 
     const providedKey = auth.replace('Bearer ', '')
-    const agent = db.prepare(`
+    const agent = await db.get(`
       SELECT * FROM agents
       WHERE ? LIKE proxy_key_prefix || '%'
         AND agent_type = 'external'
       LIMIT 1
-    `).get(providedKey)
+    `, [providedKey])
 
     if (!agent) return reply.code(401).send({ error: 'unauthorized' })
 
@@ -166,9 +166,9 @@ export default async function proxyRoutes(fastify) {
   }
 
   async function getAgentApiKey(agent, reply) {
-    const apiKey = db.prepare(
+    const apiKey = await db.get(
       'SELECT * FROM api_keys WHERE id = ? AND tenant_id = ?'
-    ).get(agent.api_key_id, agent.tenant_id)
+    , [agent.api_key_id, agent.tenant_id])
 
     if (!apiKey && agent.endpoint_url) {
       return {
@@ -202,8 +202,7 @@ export default async function proxyRoutes(fastify) {
     const agent = request.proxyAgent
     const pipeline = runCompliancePipeline(agent, extractOpenAIMessage(request.body), 'openai')
     const configuredConnection = agent.api_key_id
-      ? db.prepare('SELECT * FROM api_keys WHERE id = ? AND tenant_id = ?')
-        .get(agent.api_key_id, agent.tenant_id)
+      ? await db.get('SELECT * FROM api_keys WHERE id = ? AND tenant_id = ?', [agent.api_key_id, agent.tenant_id])
       : null
     const blockedModel = proxyModel(agent, configuredConnection, request.body?.model)
     const shouldBlock = agent.interception_mode === 'block' && pipeline.guardResult.allowed === false
@@ -243,8 +242,7 @@ export default async function proxyRoutes(fastify) {
     const agent = request.proxyAgent
     const pipeline = runCompliancePipeline(agent, extractAnthropicMessage(request.body), 'anthropic')
     const configuredConnection = agent.api_key_id
-      ? db.prepare('SELECT * FROM api_keys WHERE id = ? AND tenant_id = ?')
-        .get(agent.api_key_id, agent.tenant_id)
+      ? await db.get('SELECT * FROM api_keys WHERE id = ? AND tenant_id = ?', [agent.api_key_id, agent.tenant_id])
       : null
     const blockedModel = proxyModel(agent, configuredConnection, request.body?.model)
     const shouldBlock = agent.interception_mode === 'block' && pipeline.guardResult.allowed === false
@@ -287,8 +285,7 @@ export default async function proxyRoutes(fastify) {
     const apiVersion = request.query['api-version'] || '2024-02-01'
     const pipeline = runCompliancePipeline(agent, extractOpenAIMessage(request.body), 'azure')
     const configuredConnection = agent.api_key_id
-      ? db.prepare('SELECT * FROM api_keys WHERE id = ? AND tenant_id = ?')
-        .get(agent.api_key_id, agent.tenant_id)
+      ? await db.get('SELECT * FROM api_keys WHERE id = ? AND tenant_id = ?', [agent.api_key_id, agent.tenant_id])
       : null
     const blockedModel = proxyModel(agent, configuredConnection, model)
     const shouldBlock = agent.interception_mode === 'block' && pipeline.guardResult.allowed === false
@@ -327,8 +324,7 @@ export default async function proxyRoutes(fastify) {
     const agent = request.proxyAgent
     const pipeline = runCompliancePipeline(agent, extractOpenAIMessage(request.body), 'custom')
     const configuredConnection = agent.api_key_id
-      ? db.prepare('SELECT * FROM api_keys WHERE id = ? AND tenant_id = ?')
-        .get(agent.api_key_id, agent.tenant_id)
+      ? await db.get('SELECT * FROM api_keys WHERE id = ? AND tenant_id = ?', [agent.api_key_id, agent.tenant_id])
       : null
     const blockedModel = proxyModel(agent, configuredConnection, request.body?.model)
     const shouldBlock = agent.interception_mode === 'block' && pipeline.guardResult.allowed === false

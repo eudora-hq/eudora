@@ -5,13 +5,12 @@ export function record(traceData, db) {
   setImmediate(() => {
     try {
       const _db = db ?? getDb()
-      _db.prepare(`
+      await _db.query(`
         INSERT INTO traces
           (id, tenant_id, conversation_id, cron_run_id, workflow_run_id,
            intent, context_injected, tokens_used, duration_ms, risk_score, ts)
         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-      `).run(
-        nanoid(),
+      `, [nanoid(),
         traceData.tenantId,
         traceData.conversationId || null,
         traceData.cronRunId || null,
@@ -21,8 +20,7 @@ export function record(traceData, db) {
         traceData.tokensUsed,
         traceData.durationMs,
         traceData.riskScore,
-        Date.now()
-      )
+        Date.now()])
     } catch (err) {
       console.warn('[traceRecorder] insert failed:', err.message)
     }

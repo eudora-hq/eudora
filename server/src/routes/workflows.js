@@ -33,16 +33,16 @@ export default async function workflowsRoutes(fastify) {
 
     const id = nanoid()
     const now = Date.now()
-    db.prepare(
+    await db.query(
       `INSERT INTO workflows (id, tenant_id, name, description, nodes, edges, created_at, updated_at)
        VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
-    ).run(id, request.tenantId, name, description, JSON.stringify(nodes), JSON.stringify(edges), now, now)
+    , [id, request.tenantId, name, description, JSON.stringify(nodes), JSON.stringify(edges), now, now])
 
-    db.prepare(
+    await db.query(
       'INSERT INTO usage_events (id, tenant_id, event_type, value, ts) VALUES (?, ?, ?, ?, ?)'
-    ).run(nanoid(), request.tenantId, 'workflows', 1, now)
+    , [nanoid(), request.tenantId, 'workflows', 1, now])
 
-    return reply.code(201).send(parseWorkflow(db.prepare('SELECT * FROM workflows WHERE id = ?').get(id)))
+    return reply.code(201).send(parseWorkflow(await db.get('SELECT * FROM workflows WHERE id = ?', [id])))
   })
 
   fastify.get('/', async (request) => {
@@ -67,7 +67,7 @@ export default async function workflowsRoutes(fastify) {
     if (!workflow) return reply.code(404).send({ error: 'workflow_not_found' })
 
     const { name, description, nodes, edges } = request.body || {}
-    db.prepare(
+    await db.query(
       `UPDATE workflows SET
         name = COALESCE(?, name),
         description = COALESCE(?, description),
@@ -75,17 +75,15 @@ export default async function workflowsRoutes(fastify) {
         edges = COALESCE(?, edges),
         updated_at = ?
        WHERE id = ? AND tenant_id = ?`
-    ).run(
-      name,
+    , [name,
       description,
       nodes === undefined ? null : JSON.stringify(nodes),
       edges === undefined ? null : JSON.stringify(edges),
       Date.now(),
       request.params.id,
-      request.tenantId
-    )
+      request.tenantId])
 
-    return parseWorkflow(db.prepare('SELECT * FROM workflows WHERE id = ?').get(request.params.id))
+    return parseWorkflow(await db.get('SELECT * FROM workflows WHERE id = ?', [request.params.id]))
   })
 
   fastify.delete('/:id', async (request, reply) => {
@@ -94,8 +92,8 @@ export default async function workflowsRoutes(fastify) {
       .get(request.params.id, request.tenantId)
     if (!workflow) return reply.code(404).send({ error: 'workflow_not_found' })
 
-    db.prepare('DELETE FROM workflow_runs WHERE workflow_id = ? AND tenant_id = ?').run(request.params.id, request.tenantId)
-    db.prepare('DELETE FROM workflows WHERE id = ? AND tenant_id = ?').run(request.params.id, request.tenantId)
+    await db.query('DELETE FROM workflow_runs WHERE workflow_id = ? AND tenant_id = ?', [request.params.id, request.tenantId])
+    await db.query('DELETE FROM workflows WHERE id = ? AND tenant_id = ?', [request.params.id, request.tenantId])
     return { success: true }
   })
 
@@ -111,10 +109,10 @@ export default async function workflowsRoutes(fastify) {
 
     const { trigger = 'manual' } = request.body || {}
     const runId = nanoid()
-    db.prepare(
+    await db.query(
       `INSERT INTO workflow_runs (id, tenant_id, workflow_id, status, trigger, node_results, started_at)
        VALUES (?, ?, ?, ?, ?, ?, ?)`
-    ).run(runId, request.tenantId, request.params.id, 'running', trigger, '[]', Date.now())
+    , [runId, request.tenantId, request.params.id, 'running', trigger, '[]', Date.now()])
 
     setImmediate(() => {
       executeWorkflow(request.params.id, request.tenantId, db, runId, request.user.userId).catch((err) => {

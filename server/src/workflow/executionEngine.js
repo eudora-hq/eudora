@@ -27,9 +27,9 @@ export async function executeWorkflow(
   const activeRunId = runId || getRunningRunId(db, workflowId, tenantId) || nanoid()
   const nodes = JSON.parse(workflow.nodes || '[]')
   const edges = JSON.parse(workflow.edges || '[]')
-  const existingRun = db.prepare(
+  const existingRun = await db.get(
     'SELECT node_results FROM workflow_runs WHERE id = ? AND tenant_id = ?'
-  ).get(activeRunId, tenantId)
+  , [activeRunId, tenantId])
   const persistedResults = JSON.parse(existingRun?.node_results || '[]')
   const results = options.resumeGateId
     ? persistedResults.filter(result => result.gateId !== options.resumeGateId)
@@ -102,11 +102,11 @@ export async function executeWorkflow(
         riskScores.set(nodeId, result.riskScore || 0)
 
         if (result.status === 'pending_approval') {
-          db.prepare(`
+          await db.query(`
             UPDATE workflow_runs
             SET status = 'pending_approval', node_results = ?, completed_at = NULL
             WHERE id = ? AND tenant_id = ?
-          `).run(JSON.stringify(results), activeRunId, tenantId)
+          `, [JSON.stringify(results), activeRunId, tenantId])
           return results
         }
 
@@ -121,13 +121,13 @@ export async function executeWorkflow(
     }
 
     const totalTokensUsed = results.reduce((sum, result) => sum + (result.tokensUsed || 0), 0)
-    db.prepare(
+    await db.query(
       'UPDATE workflow_runs SET status = ?, node_results = ?, completed_at = ? WHERE id = ? AND tenant_id = ?'
-    ).run('success', JSON.stringify(results), Date.now(), activeRunId, tenantId)
+    , ['success', JSON.stringify(results), Date.now(), activeRunId, tenantId])
 
-    db.prepare(
+    await db.query(
       'INSERT INTO usage_events (id, tenant_id, event_type, value, ts) VALUES (?, ?, ?, ?, ?)'
-    ).run(nanoid(), tenantId, 'workflow_run', totalTokensUsed, Date.now())
+    , [nanoid(), tenantId, 'workflow_run', totalTokensUsed, Date.now()])
 
     log({
       tenantId,
@@ -146,9 +146,9 @@ export async function executeWorkflow(
 
     return results
   } catch (err) {
-    db.prepare(
+    await db.query(
       'UPDATE workflow_runs SET status = ?, node_results = ?, completed_at = ? WHERE id = ? AND tenant_id = ?'
-    ).run('failed', JSON.stringify(results), Date.now(), activeRunId, tenantId)
+    , ['failed', JSON.stringify(results), Date.now(), activeRunId, tenantId])
     log({
       tenantId,
       userId: initiatedByUserId,
@@ -349,10 +349,10 @@ async function executeHumanApprovalNode(node, input, tenantId, db, context, star
   }
 
   if (context.resumeGateId) {
-    const gate = db.prepare(`
+    const gate = await db.get(`
       SELECT * FROM approval_gates
       WHERE id = ? AND tenant_id = ? AND workflow_id = ? AND node_id = ?
-    `).get(context.resumeGateId, tenantId, context.workflowId, node.id)
+    `, [context.resumeGateId, tenantId, context.workflowId, node.id])
     if (!gate || gate.status !== 'approved') {
       return {
         nodeId: node.id,
@@ -386,7 +386,7 @@ async function executeHumanApprovalNode(node, input, tenantId, db, context, star
 
   if (riskScore < threshold) {
     const gateId = nanoid()
-    db.prepare(`
+    await db.query(`
       INSERT INTO approval_gates (
         id, tenant_id, agent_id, run_id, workflow_id, node_id, status,
         risk_score, risk_reason, agent_prompt, agent_response_draft,
@@ -394,8 +394,7 @@ async function executeHumanApprovalNode(node, input, tenantId, db, context, star
         on_timeout, expires_at, resolved_at
       )
       VALUES (?, ?, ?, ?, ?, ?, 'auto_approved', ?, ?, ?, '', 0, 0, ?, ?, ?, ?)
-    `).run(
-      gateId,
+    `, [gateId,
       tenantId,
       agentId,
       context.runId,
@@ -407,8 +406,7 @@ async function executeHumanApprovalNode(node, input, tenantId, db, context, star
       Number(config.timeout_minutes) || 60,
       config.on_timeout === 'escalate_owner' ? 'escalate_owner' : 'reject',
       new Date().toISOString(),
-      new Date().toISOString()
-    )
+      new Date().toISOString()])
     log({
       tenantId,
       userId: context.initiatedByUserId,
@@ -474,14 +472,14 @@ function resolveApprovalAgentId(node, context) {
 
 function configuredApprovers(db, tenantId, agentId, configured) {
   if (Array.isArray(configured) && configured.length) return configured
-  const owner = db.prepare(
+  const owner = await db.get(
     'SELECT owner_id FROM agents WHERE id = ? AND tenant_id = ? AND owner_type = ?'
-  ).get(agentId, tenantId, 'human')
-  return db.prepare(`
+  , [agentId, tenantId, 'human'])
+  return await db.all(`
     SELECT id FROM users
     WHERE tenant_id = ? AND role IN ('owner', 'admin') AND id != ?
     ORDER BY CASE role WHEN 'owner' THEN 0 ELSE 1 END
-  `).all(tenantId, owner?.owner_id || '').map(row => row.id)
+  `, [tenantId, owner?.owner_id || '']).map(row => row.id)
 }
 
 async function executeFetchUrlNode(node, input, tenantId, db, context, startedAt) {

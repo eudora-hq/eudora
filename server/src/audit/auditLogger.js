@@ -22,11 +22,10 @@ function sha256(value) {
 }
 
 export function log(entry, db) {
-  setImmediate(() => {
+  setImmediate(async () => {
     try {
       const _db = db ?? getDb()
-      const hasResolvedModel = _db.prepare('PRAGMA table_info(audit_log)')
-        .all()
+      const hasResolvedModel = await _db.all('PRAGMA table_info(audit_log)')
         .some(column => column.name === 'resolved_model')
       const columns = [
         'id', 'tenant_id', 'user_id', 'action', 'context_hash', 'prompt_hash',
@@ -48,10 +47,10 @@ export function log(entry, db) {
         ...(hasResolvedModel ? [entry.resolvedModel || null] : []),
         Date.now()
       ]
-      _db.prepare(`
+      await _db.query(`
         INSERT INTO audit_log (${columns.join(', ')})
         VALUES (${columns.map(() => '?').join(', ')})
-      `).run(...values)
+      `, values)
     } catch (err) {
       console.warn('[auditLogger] insert failed:', err.message)
     }

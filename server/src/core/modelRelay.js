@@ -36,7 +36,7 @@ function checkStatus(res, provider) {
 
 export async function relay(composedPrompt, apiKeyId, tenantId, modelOverride = null) {
   const db = getDb()
-  const row = db.prepare('SELECT * FROM api_keys WHERE id = ?').get(apiKeyId)
+  const row = await db.get('SELECT * FROM api_keys WHERE id = ?', [apiKeyId])
   if (!row || row.tenant_id !== tenantId) throw new Error('API key not found or access denied')
 
   const { provider } = row

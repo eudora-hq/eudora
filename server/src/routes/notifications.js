@@ -8,13 +8,13 @@ export default async function notificationsRoutes(fastify) {
   fastify.get('/', async (request) => {
     ensureTrialNotification(db, request.tenantId)
 
-    const notifications = db.prepare(`
+    const notifications = await db.all(`
       SELECT *
       FROM notifications
       WHERE tenant_id = ? AND (user_id IS NULL OR user_id = ?)
       ORDER BY created_at DESC
       LIMIT 50
-    `).all(request.tenantId, request.user.userId)
+    `, [request.tenantId, request.user.userId])
 
     return {
       notifications,
@@ -23,28 +23,28 @@ export default async function notificationsRoutes(fastify) {
   })
 
   fastify.post('/read-all', async (request, reply) => {
-    db.prepare(`
+    await db.query(`
       UPDATE notifications
       SET read = 1
       WHERE tenant_id = ? AND (user_id IS NULL OR user_id = ?)
-    `).run(request.tenantId, request.user.userId)
+    `, [request.tenantId, request.user.userId])
     return reply.send({ read: true })
   })
 
   fastify.post('/:id/read', async (request, reply) => {
-    db.prepare(`
+    await db.query(`
       UPDATE notifications
       SET read = 1
       WHERE id = ? AND tenant_id = ? AND (user_id IS NULL OR user_id = ?)
-    `).run(request.params.id, request.tenantId, request.user.userId)
+    `, [request.params.id, request.tenantId, request.user.userId])
     return reply.send({ read: true })
   })
 
   fastify.delete('/:id', async (request, reply) => {
-    db.prepare(`
+    await db.query(`
       DELETE FROM notifications
       WHERE id = ? AND tenant_id = ? AND (user_id IS NULL OR user_id = ?)
-    `).run(request.params.id, request.tenantId, request.user.userId)
+    `, [request.params.id, request.tenantId, request.user.userId])
     return reply.send({ deleted: true })
   })
 }
@@ -65,12 +65,12 @@ function ensureTrialNotification(db, tenantId) {
 
   if (!type) return
 
-  const existing = db.prepare(`
+  const existing = await db.get(`
     SELECT id
     FROM notifications
     WHERE tenant_id = ? AND type = ?
     LIMIT 1
-  `).get(tenantId, type)
+  `, [tenantId, type])
   if (existing) return
 
   const daysLeft = Math.max(1, Math.ceil(remainingMs / (24 * 60 * 60 * 1000)))

@@ -1,6 +1,6 @@
 import { nanoid } from 'nanoid'
 
-export function createNotification(db, {
+export async function createNotification(db, {
   tenantId,
   userId = null,
   type,
@@ -9,21 +9,19 @@ export function createNotification(db, {
   actionUrl = null,
 }) {
   try {
-    db.prepare(`
+    await db.query(`
       INSERT INTO notifications (
         id, tenant_id, user_id, type, title, message, action_url, created_at
       )
       VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-    `).run(
-      nanoid(),
+    `, [nanoid(),
       tenantId,
       userId,
       type,
       title,
       message,
       actionUrl,
-      Date.now()
-    )
+      Date.now()])
   } catch (err) {
     // Isolated tests may use an older partial schema without notifications.
     if (err.message?.includes('no such table: notifications')) return

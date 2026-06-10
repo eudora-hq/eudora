@@ -1,11 +1,11 @@
-export function tenantQuery(db, sql, params = []) {
-  return db.prepare(sql).all(...params)
+export async function tenantQuery(db, sql, params = []) {
+  return await db.all(sql, params)
 }
 
-export function tenantGet(db, sql, params = []) {
-  return db.prepare(sql).get(...params)
+export async function tenantGet(db, sql, params = []) {
+  return await db.get(sql, params)
 }
 
-export function tenantRun(db, sql, params = []) {
-  return db.prepare(sql).run(...params)
+export async function tenantRun(db, sql, params = []) {
+  return await db.query(sql, params)
 }

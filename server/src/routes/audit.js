@@ -54,16 +54,16 @@ export default async function auditRoutes(fastify) {
     const where = conditions.join(' AND ')
     const offset = (Number(page) - 1) * Number(limit)
 
-    const total = db.prepare(
+    const total = await db.get(
       `SELECT COUNT(*) as count FROM audit_log WHERE ${where}`
-    ).get(...params).count
+    , params).count
 
-    const events = db.prepare(
+    const events = await db.all(
       `SELECT id, action, risk_score, metadata, ts FROM audit_log
        WHERE ${where}
        ORDER BY ts DESC
        LIMIT ? OFFSET ?`
-    ).all(...params, Number(limit), offset)
+    , [...params, Number(limit), offset])
       .map(row => ({
         ...row,
         metadata: parseMetadata(row.metadata),
@@ -96,9 +96,9 @@ export default async function auditRoutes(fastify) {
       params.push(Number(dateTo))
     }
 
-    const events = db.prepare(
+    const events = await db.all(
       `SELECT * FROM audit_log WHERE ${conditions.join(' AND ')} ORDER BY ts ASC`
-    ).all(...params).map(row => ({
+    , params).map(row => ({
       ...row,
       metadata: parseMetadata(row.metadata),
     }))

@@ -26,7 +26,7 @@ export default async function billingRoutes(fastify) {
   fastify.get('/', async () => [])
 
   fastify.get('/subscription', async (request, reply) => {
-    const tenant = db.prepare('SELECT * FROM tenants WHERE id = ?').get(request.tenantId)
+    const tenant = await db.get('SELECT * FROM tenants WHERE id = ?', [request.tenantId])
     const agentCount = db
       .prepare('SELECT COUNT(*) AS count FROM agents WHERE tenant_id = ?')
       .get(request.tenantId).count
@@ -141,7 +141,7 @@ export default async function billingRoutes(fastify) {
   })
 
   fastify.post('/cancel', async (request, reply) => {
-    const tenant = db.prepare('SELECT * FROM tenants WHERE id = ?').get(request.tenantId)
+    const tenant = await db.get('SELECT * FROM tenants WHERE id = ?', [request.tenantId])
     if (!tenant?.stripe_customer_id) {
       return reply.code(400).send({
         error: 'no_subscription',
@@ -182,7 +182,7 @@ export default async function billingRoutes(fastify) {
   })
 
   fastify.post('/reactivate', async (request, reply) => {
-    const tenant = db.prepare('SELECT * FROM tenants WHERE id = ?').get(request.tenantId)
+    const tenant = await db.get('SELECT * FROM tenants WHERE id = ?', [request.tenantId])
     if (!tenant?.stripe_customer_id) {
       return reply.code(400).send({ error: 'no_subscription' })
     }
@@ -247,13 +247,13 @@ export default async function billingRoutes(fastify) {
           if (!tenantId || !plan) break
           const newPlan = normalizePlan(plan)
 
-          db.prepare(`
+          await db.query(`
             UPDATE tenants SET
               plan = ?,
               trial_ends_at = NULL,
               stripe_customer_id = ?
             WHERE id = ?
-          `).run(newPlan, customerId, tenantId)
+          `, [newPlan, customerId, tenantId])
 
           await seedFeatureFlags(db, tenantId, newPlan)
           break
@@ -277,8 +277,7 @@ export default async function billingRoutes(fastify) {
           const newPlan = planMap[priceId]
           if (!newPlan) break
 
-          db.prepare('UPDATE tenants SET plan = ?, trial_ends_at = NULL WHERE id = ?')
-            .run(newPlan, tenant.id)
+          await db.query('UPDATE tenants SET plan = ?, trial_ends_at = NULL WHERE id = ?', [newPlan, tenant.id])
           await seedFeatureFlags(db, tenant.id, newPlan)
           break
         }
@@ -292,8 +291,7 @@ export default async function billingRoutes(fastify) {
           if (!tenant) break
 
           const expiredAt = Date.now() - 1
-          db.prepare('UPDATE tenants SET plan = ?, trial_ends_at = ? WHERE id = ?')
-            .run('trial', expiredAt, tenant.id)
+          await db.query('UPDATE tenants SET plan = ?, trial_ends_at = ? WHERE id = ?', ['trial', expiredAt, tenant.id])
           await seedFeatureFlags(db, tenant.id, 'trial')
           break
         }
@@ -319,13 +317,13 @@ export default async function billingRoutes(fastify) {
       : TIER_LIMITS[plan] || TIER_LIMITS.trial
     const since = Date.now() - 24 * 60 * 60 * 1000
 
-    const agents = db.prepare('SELECT COUNT(*) AS count FROM agents WHERE tenant_id = ?').get(tenantId).count
+    const agents = await db.get('SELECT COUNT(*) AS count FROM agents WHERE tenant_id = ?', [tenantId]).count
     const messagesToday = db
       .prepare("SELECT COALESCE(SUM(value), 0) AS total FROM usage_events WHERE tenant_id = ? AND event_type = 'message' AND ts > ?")
       .get(tenantId, since).total
-    const cronJobs = db.prepare('SELECT COUNT(*) AS count FROM cron_jobs WHERE tenant_id = ?').get(tenantId).count
-    const contextFiles = db.prepare('SELECT COUNT(*) AS count FROM context_files WHERE tenant_id = ?').get(tenantId).count
-    const workflows = db.prepare('SELECT COUNT(*) AS count FROM workflows WHERE tenant_id = ?').get(tenantId).count
+    const cronJobs = await db.get('SELECT COUNT(*) AS count FROM cron_jobs WHERE tenant_id = ?', [tenantId]).count
+    const contextFiles = await db.get('SELECT COUNT(*) AS count FROM context_files WHERE tenant_id = ?', [tenantId]).count
+    const workflows = await db.get('SELECT COUNT(*) AS count FROM workflows WHERE tenant_id = ?', [tenantId]).count
 
     return reply.send({
       plan: process.env.SELF_HOSTED === 'true' ? 'enterprise' : plan,

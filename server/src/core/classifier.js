@@ -41,7 +41,7 @@ function checkStatus(res) {
 export async function classify(userMessage, apiKeyId, tenantId) {
   try {
     const db = getDb()
-    const row = db.prepare('SELECT * FROM api_keys WHERE id = ?').get(apiKeyId)
+    const row = await db.get('SELECT * FROM api_keys WHERE id = ?', [apiKeyId])
     if (!row || row.tenant_id !== tenantId) throw new Error('API key not found or access denied')
 
     let decryptedKey = null

@@ -46,8 +46,7 @@ export default async function chatRoutes(fastify) {
       })
     }
     const connection = agent.api_key_id
-      ? db.prepare('SELECT * FROM api_keys WHERE id = ? AND tenant_id = ?')
-        .get(agent.api_key_id, request.tenantId)
+      ? await db.get('SELECT * FROM api_keys WHERE id = ? AND tenant_id = ?', [agent.api_key_id, request.tenantId])
       : null
     const configuredModel = resolveModel(agent, connection)
 
@@ -58,9 +57,9 @@ export default async function chatRoutes(fastify) {
     let conversationId = incomingConvId
     if (!conversationId) {
       conversationId = nanoid()
-      db.prepare(
+      await db.query(
         'INSERT INTO conversations (id, tenant_id, agent_id, user_id, created_at) VALUES (?, ?, ?, ?, ?)'
-      ).run(conversationId, request.tenantId, agentId, request.user.userId, Date.now())
+      , [conversationId, request.tenantId, agentId, request.user.userId, Date.now()])
     } else {
       const conv = db
         .prepare('SELECT id, tenant_id FROM conversations WHERE id = ?')
@@ -69,9 +68,9 @@ export default async function chatRoutes(fastify) {
       if (conv.tenant_id !== request.tenantId) return reply.code(403).send({ error: 'forbidden' })
     }
 
-    db.prepare(
+    await db.query(
       'INSERT INTO messages (id, conversation_id, tenant_id, role, content, created_at) VALUES (?, ?, ?, ?, ?, ?)'
-    ).run(nanoid(), conversationId, request.tenantId, 'user', message, Date.now())
+    , [nanoid(), conversationId, request.tenantId, 'user', message, Date.now()])
 
     try {
       // Step 1 — Sanitise
@@ -151,14 +150,14 @@ export default async function chatRoutes(fastify) {
       createHighRiskNotification(db, request.tenantId, agent.name, riskScore)
 
       // Step 9 — Store assistant message
-      db.prepare(
+      await db.query(
         'INSERT INTO messages (id, conversation_id, tenant_id, role, content, created_at) VALUES (?, ?, ?, ?, ?, ?)'
-      ).run(nanoid(), conversationId, request.tenantId, 'assistant', content, Date.now())
+      , [nanoid(), conversationId, request.tenantId, 'assistant', content, Date.now()])
 
       // Step 10 — Usage event
-      db.prepare(
+      await db.query(
         'INSERT INTO usage_events (id, tenant_id, event_type, value, ts) VALUES (?, ?, ?, ?, ?)'
-      ).run(nanoid(), request.tenantId, 'message', tokensUsed.total, Date.now())
+      , [nanoid(), request.tenantId, 'message', tokensUsed.total, Date.now()])
 
       // Step 11 — Audit log (fire-and-forget)
       log({
@@ -270,7 +269,7 @@ export default async function chatRoutes(fastify) {
   // GET /chat/conversations/:id/messages
   fastify.get('/conversations/:id/messages', async (request, reply) => {
     const { id } = request.params
-    const conv = db.prepare('SELECT id, tenant_id FROM conversations WHERE id = ?').get(id)
+    const conv = await db.get('SELECT id, tenant_id FROM conversations WHERE id = ?', [id])
     if (!conv) return reply.code(404).send({ error: 'not_found' })
     if (conv.tenant_id !== request.tenantId) return reply.code(403).send({ error: 'forbidden' })
 
@@ -285,7 +284,7 @@ export default async function chatRoutes(fastify) {
   // GET /chat/conversations/:id/trace
   fastify.get('/conversations/:id/trace', async (request, reply) => {
     const { id } = request.params
-    const conv = db.prepare('SELECT id, tenant_id FROM conversations WHERE id = ?').get(id)
+    const conv = await db.get('SELECT id, tenant_id FROM conversations WHERE id = ?', [id])
     if (!conv) return reply.code(404).send({ error: 'not_found' })
     if (conv.tenant_id !== request.tenantId) return reply.code(403).send({ error: 'forbidden' })
 

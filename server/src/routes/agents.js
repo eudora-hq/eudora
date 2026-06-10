@@ -29,7 +29,7 @@ export default async function agentsRoutes(fastify) {
   // List all agents for tenant
   fastify.get('/', async (request) => {
     try {
-      return db.prepare(`
+      return await db.all(`
         SELECT a.*,
           u.email AS owner_email,
           pa.name AS owner_agent_name
@@ -38,12 +38,12 @@ export default async function agentsRoutes(fastify) {
         LEFT JOIN agents pa ON a.owner_type = 'agent' AND pa.id = a.owner_id AND pa.tenant_id = a.tenant_id
         WHERE a.tenant_id = ?
         ORDER BY a.created_at DESC
-      `).all(request.tenantId).map(redactAgentSecrets)
+      `, [request.tenantId]).map(redactAgentSecrets)
     } catch (err) {
       if (!String(err.message || '').includes('no such column')) throw err
-      return db.prepare(
+      return await db.all(
         'SELECT * FROM agents WHERE tenant_id = ? ORDER BY created_at DESC'
-      ).all(request.tenantId).map(redactAgentSecrets)
+      , [request.tenantId]).map(redactAgentSecrets)
     }
   })
 
@@ -101,7 +101,7 @@ export default async function agentsRoutes(fastify) {
     const now = Date.now()
     const resolvedProvider = providerHint || 'openai'
 
-    db.prepare(`
+    await db.query(`
       INSERT INTO agents (
         id, tenant_id, name, purpose, model_provider, api_key_id,
         agent_type, proxy_key_encrypted, proxy_key_iv, proxy_key_prefix,
@@ -109,8 +109,7 @@ export default async function agentsRoutes(fastify) {
         owner_chain, model_override, endpoint_url, created_at
       )
       VALUES (?, ?, ?, ?, ?, ?, 'external', ?, ?, ?, ?, ?, 'live', ?, ?, ?, ?, ?, ?)
-    `).run(
-      agentId,
+    `, [agentId,
       request.tenantId,
       name,
       purpose,
@@ -126,8 +125,7 @@ export default async function agentsRoutes(fastify) {
       JSON.stringify(ownership.chain),
       default_model?.trim() || null,
       endpoint_url?.trim() || null,
-      now
-    )
+      now])
 
     log({
       tenantId: request.tenantId,
@@ -156,9 +154,9 @@ export default async function agentsRoutes(fastify) {
 
   // POST /agents/:id/proxy-key/rotate — rotate proxy key
   fastify.post('/:id/proxy-key/rotate', async (request, reply) => {
-    const agent = db.prepare(
+    const agent = await db.get(
       'SELECT * FROM agents WHERE id = ? AND tenant_id = ?'
-    ).get(request.params.id, request.tenantId)
+    , [request.params.id, request.tenantId])
 
     if (!agent) return reply.code(404).send({ error: 'not_found' })
     if (agent.agent_type !== 'external') {
@@ -168,11 +166,11 @@ export default async function agentsRoutes(fastify) {
     const { rawKey, prefix } = generateProxyKey()
     const { ciphertext, iv } = encrypt(rawKey)
 
-    db.prepare(`
+    await db.query(`
       UPDATE agents
       SET proxy_key_encrypted = ?, proxy_key_iv = ?, proxy_key_prefix = ?
       WHERE id = ? AND tenant_id = ?
-    `).run(ciphertext, iv, prefix, request.params.id, request.tenantId)
+    `, [ciphertext, iv, prefix, request.params.id, request.tenantId])
 
     log({
       tenantId: request.tenantId,
@@ -193,15 +191,15 @@ export default async function agentsRoutes(fastify) {
 
   // POST /agents/:id/submit-for-approval
   fastify.post('/:id/submit-for-approval', async (request, reply) => {
-    const agent = db.prepare(
+    const agent = await db.get(
       'SELECT * FROM agents WHERE id = ? AND tenant_id = ?'
-    ).get(request.params.id, request.tenantId)
+    , [request.params.id, request.tenantId])
 
     if (!agent) return reply.code(404).send({ error: 'not_found' })
 
-    db.prepare(
+    await db.query(
       'UPDATE agents SET status = ? WHERE id = ? AND tenant_id = ?'
-    ).run('pending_approval', request.params.id, request.tenantId)
+    , ['pending_approval', request.params.id, request.tenantId])
 
     log({
       tenantId: request.tenantId,
@@ -218,9 +216,9 @@ export default async function agentsRoutes(fastify) {
 
   // POST /agents/:id/approve
   fastify.post('/:id/approve', async (request, reply) => {
-    const agent = db.prepare(
+    const agent = await db.get(
       'SELECT * FROM agents WHERE id = ? AND tenant_id = ?'
-    ).get(request.params.id, request.tenantId)
+    , [request.params.id, request.tenantId])
 
     if (!agent) return reply.code(404).send({ error: 'not_found' })
     if (agent.status !== 'pending_approval') {
@@ -230,9 +228,9 @@ export default async function agentsRoutes(fastify) {
       })
     }
 
-    db.prepare(
+    await db.query(
       'UPDATE agents SET status = ? WHERE id = ? AND tenant_id = ?'
-    ).run('live', request.params.id, request.tenantId)
+    , ['live', request.params.id, request.tenantId])
 
     log({
       tenantId: request.tenantId,
@@ -254,24 +252,24 @@ export default async function agentsRoutes(fastify) {
   // PATCH /agents/:id/scope-policy
   fastify.patch('/:id/scope-policy', async (request, reply) => {
     const { scopePolicy } = request.body || {}
-    const agent = db.prepare(
+    const agent = await db.get(
       'SELECT * FROM agents WHERE id = ? AND tenant_id = ?'
-    ).get(request.params.id, request.tenantId)
+    , [request.params.id, request.tenantId])
 
     if (!agent) return reply.code(404).send({ error: 'not_found' })
 
-    db.prepare(
+    await db.query(
       'UPDATE agents SET scope_policy = ? WHERE id = ? AND tenant_id = ?'
-    ).run(JSON.stringify(scopePolicy || {}), request.params.id, request.tenantId)
+    , [JSON.stringify(scopePolicy || {}), request.params.id, request.tenantId])
 
     return { scopePolicy: scopePolicy || {} }
   })
 
   // Get single agent
   fastify.get('/:id', async (request, reply) => {
-    const agent = db.prepare(
+    const agent = await db.get(
       'SELECT * FROM agents WHERE id = ? AND tenant_id = ?'
-    ).get(request.params.id, request.tenantId)
+    , [request.params.id, request.tenantId])
     if (!agent) return reply.code(404).send({ error: 'agent_not_found' })
     return redactAgentSecrets(agent)
   })
@@ -324,13 +322,12 @@ export default async function agentsRoutes(fastify) {
     }
 
     const id = nanoid()
-    db.prepare(
+    await db.query(
       `INSERT INTO agents
         (id, tenant_id, name, purpose, model_provider, api_key_id, system_prompt,
          owner_type, owner_id, owner_chain, model_override, endpoint_url, created_at)
        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
-    ).run(
-      id,
+    , [id,
       request.tenantId,
       name,
       purpose,
@@ -342,19 +339,18 @@ export default async function agentsRoutes(fastify) {
       JSON.stringify(ownership.chain),
       model_override?.trim() || null,
       endpoint_url?.trim() || null,
-      Date.now()
-    )
+      Date.now()])
 
     return reply.code(201).send(redactAgentSecrets(
-      db.prepare('SELECT * FROM agents WHERE id = ?').get(id)
+      await db.get('SELECT * FROM agents WHERE id = ?', [id])
     ))
   })
 
   // Update agent
   fastify.patch('/:id', async (request, reply) => {
-    const agent = db.prepare(
+    const agent = await db.get(
       'SELECT * FROM agents WHERE id = ? AND tenant_id = ?'
-    ).get(request.params.id, request.tenantId)
+    , [request.params.id, request.tenantId])
     if (!agent) return reply.code(404).send({ error: 'agent_not_found' })
 
     const {
@@ -395,7 +391,7 @@ export default async function agentsRoutes(fastify) {
         })
       }
 
-      db.prepare(
+      await db.query(
         `UPDATE agents SET
           name = COALESCE(?, name),
           purpose = COALESCE(?, purpose),
@@ -408,18 +404,16 @@ export default async function agentsRoutes(fastify) {
           owner_id = ?,
           owner_chain = ?
          WHERE id = ? AND tenant_id = ?`
-      ).run(
-        name, purpose, model_provider, api_key_id, system_prompt,
+      , [name, purpose, model_provider, api_key_id, system_prompt,
         nextModelOverride, nextEndpointUrl,
         newOwnerType,
         newOwnerId,
         JSON.stringify(ownership.chain),
         request.params.id,
-        request.tenantId
-      )
+        request.tenantId])
     } else {
       // No ownership change — just update other fields
-      db.prepare(
+      await db.query(
         `UPDATE agents SET
           name = COALESCE(?, name),
           purpose = COALESCE(?, purpose),
@@ -429,27 +423,24 @@ export default async function agentsRoutes(fastify) {
           model_override = ?,
           endpoint_url = ?
          WHERE id = ? AND tenant_id = ?`
-      ).run(
-        name, purpose, model_provider, api_key_id, system_prompt,
+      , [name, purpose, model_provider, api_key_id, system_prompt,
         nextModelOverride, nextEndpointUrl,
         request.params.id,
-        request.tenantId
-      )
+        request.tenantId])
     }
 
     return redactAgentSecrets(
-      db.prepare('SELECT * FROM agents WHERE id = ?').get(request.params.id)
+      await db.get('SELECT * FROM agents WHERE id = ?', [request.params.id])
     )
   })
 
   // Delete agent
   fastify.delete('/:id', async (request, reply) => {
-    const agent = db.prepare(
+    const agent = await db.get(
       'SELECT * FROM agents WHERE id = ? AND tenant_id = ?'
-    ).get(request.params.id, request.tenantId)
+    , [request.params.id, request.tenantId])
     if (!agent) return reply.code(404).send({ error: 'agent_not_found' })
-    db.prepare('DELETE FROM agents WHERE id = ? AND tenant_id = ?')
-      .run(request.params.id, request.tenantId)
+    await db.query('DELETE FROM agents WHERE id = ? AND tenant_id = ?', [request.params.id, request.tenantId])
     return { success: true }
   })
 }

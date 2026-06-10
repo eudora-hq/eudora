@@ -1,7 +1,7 @@
 import { encrypt, decrypt } from './encryption.js'
 
 export async function refreshOAuthToken(db, apiKeyId, tenantId) {
-  const row = db.prepare('SELECT * FROM api_keys WHERE id = ?').get(apiKeyId)
+  const row = await db.get('SELECT * FROM api_keys WHERE id = ?', [apiKeyId])
   if (!row || row.tenant_id !== tenantId) {
     throw new Error('API key not found or access denied')
   }
@@ -34,13 +34,13 @@ export async function refreshOAuthToken(db, apiKeyId, tenantId) {
   const { ciphertext, iv } = encrypt(access_token)
   const newExpiresAt = Date.now() + expires_in * 1000
 
-  db.prepare(`
+  await db.query(`
     UPDATE api_keys
        SET oauth_access_token_encrypted = ?,
            oauth_access_token_iv = ?,
            oauth_expires_at = ?
      WHERE id = ?
-  `).run(ciphertext, iv, newExpiresAt, apiKeyId)
+  `, [ciphertext, iv, newExpiresAt, apiKeyId])
 
   return {
     ...row,

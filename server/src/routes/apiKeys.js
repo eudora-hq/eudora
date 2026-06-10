@@ -7,7 +7,7 @@ const REQUIRE_URL = new Set(['ollama', 'custom'])
 
 export default async function apiKeysRoutes(fastify) {
   const db = fastify.db
-  const apiKeyColumns = new Set(db.prepare('PRAGMA table_info(api_keys)').all().map((col) => col.name))
+  const apiKeyColumns = new Set(await db.all('PRAGMA table_info(api_keys)').map((col) => col.name))
   const hasModelName = apiKeyColumns.has('model_name')
 
   // POST /api-keys
@@ -38,29 +38,25 @@ export default async function apiKeysRoutes(fastify) {
     const id = nanoid()
     const created_at = Date.now()
     if (hasModelName && apiKeyColumns.has('default_model')) {
-      db.prepare(
+      await db.query(
         `INSERT INTO api_keys
            (id, tenant_id, user_id, provider, auth_type, label, base_url, key_encrypted, key_iv, model_name, default_model, created_at)
          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
-      ).run(
-        id, request.tenantId, request.user.userId,
+      , [id, request.tenantId, request.user.userId,
         provider, auth_type, label,
         base_url ?? null, key_encrypted, key_iv,
         request.body.model_name ?? null,
         default_model?.trim() || null,
-        created_at
-      )
+        created_at])
     } else {
-      db.prepare(
+      await db.query(
         `INSERT INTO api_keys
            (id, tenant_id, user_id, provider, auth_type, label, base_url, key_encrypted, key_iv, created_at)
          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
-      ).run(
-        id, request.tenantId, request.user.userId,
+      , [id, request.tenantId, request.user.userId,
         provider, auth_type, label,
         base_url ?? null, key_encrypted, key_iv,
-        created_at
-      )
+        created_at])
     }
 
     return reply.code(201).send({
@@ -78,7 +74,7 @@ export default async function apiKeysRoutes(fastify) {
   fastify.post('/test', async (request, reply) => {
     const { id } = request.body || {}
 
-    const row = db.prepare('SELECT * FROM api_keys WHERE id = ?').get(id)
+    const row = await db.get('SELECT * FROM api_keys WHERE id = ?', [id])
     if (!row) return reply.code(404).send({ error: 'not_found' })
     if (row.tenant_id !== request.tenantId) return reply.code(403).send({ error: 'forbidden' })
 
@@ -184,11 +180,11 @@ export default async function apiKeysRoutes(fastify) {
   fastify.patch('/:id', async (request, reply) => {
     const { id } = request.params
     const { base_url, default_model } = request.body || {}
-    const row = db.prepare(`
+    const row = await db.get(`
       SELECT id, tenant_id, provider
       FROM api_keys
       WHERE id = ?
-    `).get(id)
+    `, [id])
 
     if (!row) return reply.code(404).send({ error: 'not_found' })
     if (row.tenant_id !== request.tenantId) {
@@ -217,20 +213,18 @@ export default async function apiKeysRoutes(fastify) {
       normalizedUrl = base_url.replace(/\/+$/, '')
     }
 
-    db.prepare(`
+    await db.query(`
       UPDATE api_keys
       SET base_url = ?, default_model = ?
       WHERE id = ? AND tenant_id = ?
-    `).run(
-      updatingBaseUrl ? normalizedUrl : db.prepare('SELECT base_url FROM api_keys WHERE id = ?').get(id).base_url,
+    `, [updatingBaseUrl ? normalizedUrl : db.prepare('SELECT base_url FROM api_keys WHERE id = ?').get(id).base_url,
       updatingModel ? (default_model?.trim() || null) : db.prepare('SELECT default_model FROM api_keys WHERE id = ?').get(id).default_model,
       id,
-      request.tenantId
-    )
+      request.tenantId])
 
-    const updated = db.prepare(
+    const updated = await db.get(
       'SELECT id, provider, base_url, default_model FROM api_keys WHERE id = ? AND tenant_id = ?'
-    ).get(id, request.tenantId)
+    , [id, request.tenantId])
     return reply.send(updated)
   })
 
@@ -238,13 +232,13 @@ export default async function apiKeysRoutes(fastify) {
   fastify.delete('/:id', async (request, reply) => {
     const { id } = request.params
 
-    const row = db.prepare('SELECT id, tenant_id FROM api_keys WHERE id = ?').get(id)
+    const row = await db.get('SELECT id, tenant_id FROM api_keys WHERE id = ?', [id])
     if (!row) return reply.code(404).send({ error: 'not_found' })
     if (row.tenant_id !== request.tenantId) return reply.code(403).send({ error: 'forbidden' })
 
     // Nullify any agents using this key before deleting
-    db.prepare('UPDATE agents SET api_key_id = NULL WHERE api_key_id = ? AND tenant_id = ?').run(id, request.tenantId)
-    db.prepare('DELETE FROM api_keys WHERE id = ?').run(id)
+    await db.query('UPDATE agents SET api_key_id = NULL WHERE api_key_id = ? AND tenant_id = ?', [id, request.tenantId])
+    await db.query('DELETE FROM api_keys WHERE id = ?', [id])
     return reply.send({ success: true })
   })
 }

@@ -49,7 +49,7 @@ export function deregisterJob(jobId) {
 
 export function loadAllJobs() {
   const db = getDb()
-  const jobs = db.prepare('SELECT * FROM cron_jobs WHERE enabled = 1').all()
+  const jobs = await db.all('SELECT * FROM cron_jobs WHERE enabled = 1')
   for (const job of jobs) {
     registerJob(job)
   }
@@ -71,7 +71,7 @@ async function runJob(jobId) {
 
   try {
     db = getDb()
-    job = db.prepare('SELECT * FROM cron_jobs WHERE id = ?').get(jobId)
+    job = await db.get('SELECT * FROM cron_jobs WHERE id = ?', [jobId])
     if (!job || job.enabled === 0) {
       deregisterJob(jobId)
       return
@@ -83,26 +83,24 @@ async function runJob(jobId) {
 
     runId = nanoid()
     startedAt = Date.now()
-    db.prepare(
+    await db.query(
       'INSERT INTO cron_runs (id, tenant_id, cron_job_id, status, started_at) VALUES (?, ?, ?, ?, ?)'
-    ).run(runId, job.tenant_id, job.id, 'running', startedAt)
+    , [runId, job.tenant_id, job.id, 'running', startedAt])
 
     if (!agent) {
       const message = 'Agent not found'
       const durationMs = Date.now() - startedAt
-      db.prepare(
+      await db.query(
         `UPDATE cron_runs
          SET status = ?, output = ?, duration_ms = ?, completed_at = ?
          WHERE id = ?`
-      ).run('failed', message, durationMs, Date.now(), runId)
-      db.prepare('UPDATE cron_jobs SET last_run_at = ?, next_run_at = ? WHERE id = ?')
-        .run(Date.now(), nextRunTimestamp(job.schedule), job.id)
+      , ['failed', message, durationMs, Date.now(), runId])
+      await db.query('UPDATE cron_jobs SET last_run_at = ?, next_run_at = ? WHERE id = ?', [Date.now(), nextRunTimestamp(job.schedule), job.id])
       createCronFailureNotification(db, job, message)
       return
     }
     const connection = agent.api_key_id
-      ? db.prepare('SELECT * FROM api_keys WHERE id = ? AND tenant_id = ?')
-        .get(agent.api_key_id, job.tenant_id)
+      ? await db.get('SELECT * FROM api_keys WHERE id = ? AND tenant_id = ?', [agent.api_key_id, job.tenant_id])
       : null
     resolvedModel = resolveModel(agent, connection)
 
@@ -114,13 +112,12 @@ async function runJob(jobId) {
     if (!guardResult.allowed) {
       riskScore = score(sanitiserResult, guardResult, { compliant: true, violation: null })
       content = `guard_block: ${guardResult.violation}`
-      db.prepare(
+      await db.query(
         `UPDATE cron_runs
          SET status = ?, output = ?, tokens_used = ?, duration_ms = ?, risk_score = ?, completed_at = ?
          WHERE id = ?`
-      ).run('failed', content, 0, durationBeforeRelay(), riskScore, Date.now(), runId)
-      db.prepare('UPDATE cron_jobs SET last_run_at = ?, next_run_at = ? WHERE id = ?')
-        .run(Date.now(), nextRunTimestamp(job.schedule), job.id)
+      , ['failed', content, 0, durationBeforeRelay(), riskScore, Date.now(), runId])
+      await db.query('UPDATE cron_jobs SET last_run_at = ?, next_run_at = ? WHERE id = ?', [Date.now(), nextRunTimestamp(job.schedule), job.id])
       record({
         tenantId: job.tenant_id,
         cronRunId: runId,
@@ -142,9 +139,9 @@ async function runJob(jobId) {
         initiatedByUserId: humanRootId,
         agentChain: [agent.id],
       })
-      db.prepare(
+      await db.query(
         'INSERT INTO usage_events (id, tenant_id, event_type, value, ts) VALUES (?, ?, ?, ?, ?)'
-      ).run(nanoid(), job.tenant_id, 'cron_run', 0, Date.now())
+      , [nanoid(), job.tenant_id, 'cron_run', 0, Date.now()])
       createCronFailureNotification(db, job, content)
       return
     }
@@ -167,14 +164,13 @@ async function runJob(jobId) {
     riskScore = score(sanitiserResult, guardResult, scopeResult)
     const durationMs = Date.now() - startedAt
 
-    db.prepare(
+    await db.query(
       `UPDATE cron_runs
        SET status = ?, output = ?, tokens_used = ?, duration_ms = ?, risk_score = ?, completed_at = ?
        WHERE id = ?`
-    ).run('success', content, tokensUsed.total || 0, durationMs, riskScore, Date.now(), runId)
+    , ['success', content, tokensUsed.total || 0, durationMs, riskScore, Date.now(), runId])
 
-    db.prepare('UPDATE cron_jobs SET last_run_at = ?, next_run_at = ? WHERE id = ?')
-      .run(Date.now(), nextRunTimestamp(job.schedule), job.id)
+    await db.query('UPDATE cron_jobs SET last_run_at = ?, next_run_at = ? WHERE id = ?', [Date.now(), nextRunTimestamp(job.schedule), job.id])
 
     record({
       tenantId: job.tenant_id,
@@ -197,9 +193,9 @@ async function runJob(jobId) {
       initiatedByUserId: humanRootId,
       agentChain: [agent.id],
     })
-    db.prepare(
+    await db.query(
       'INSERT INTO usage_events (id, tenant_id, event_type, value, ts) VALUES (?, ?, ?, ?, ?)'
-    ).run(nanoid(), job.tenant_id, 'cron_run', tokensUsed.total || 0, Date.now())
+    , [nanoid(), job.tenant_id, 'cron_run', tokensUsed.total || 0, Date.now()])
   } catch (err) {
     try {
       const errorMessage = err?.message || 'Cron job failed'
@@ -208,20 +204,19 @@ async function runJob(jobId) {
         ? getHumanRoot(db, agent.id, job.tenant_id) || agent.owner_id
         : null
       if (db && runId) {
-        db.prepare(
+        await db.query(
           `UPDATE cron_runs
            SET status = ?, output = ?, tokens_used = ?, duration_ms = ?, risk_score = ?, completed_at = ?
            WHERE id = ?`
-        ).run('failed', errorMessage, tokensUsed?.total || 0, durationMs, riskScore, Date.now(), runId)
+        , ['failed', errorMessage, tokensUsed?.total || 0, durationMs, riskScore, Date.now(), runId])
       }
       if (db && job) {
-        db.prepare('UPDATE cron_jobs SET last_run_at = ?, next_run_at = ? WHERE id = ?')
-          .run(Date.now(), nextRunTimestamp(job.schedule), job.id)
+        await db.query('UPDATE cron_jobs SET last_run_at = ?, next_run_at = ? WHERE id = ?', [Date.now(), nextRunTimestamp(job.schedule), job.id])
       }
       if (db && job) {
-        db.prepare(
+        await db.query(
           'INSERT INTO usage_events (id, tenant_id, event_type, value, ts) VALUES (?, ?, ?, ?, ?)'
-        ).run(nanoid(), job.tenant_id, 'cron_run', tokensUsed?.total || 0, Date.now())
+        , [nanoid(), job.tenant_id, 'cron_run', tokensUsed?.total || 0, Date.now()])
       }
       if (job && runId) {
         record({

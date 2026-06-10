@@ -65,9 +65,9 @@ function gatherTraceData(db, tenantId, dateFrom, dateTo, agentId, traceMode, eve
     ? 'SELECT * FROM agents WHERE id = ? AND tenant_id = ?'
     : 'SELECT * FROM agents WHERE tenant_id = ? ORDER BY name ASC'
   const agentParams = agentId ? [agentId, tenantId] : [tenantId]
-  const agents = db.prepare(agentQuery).all(...agentParams)
+  const agents = await db.all(agentQuery, agentParams)
 
-  const traceRows = db.prepare(`
+  const traceRows = await db.all(`
     SELECT t.*,
       COALESCE(c.agent_id, cj.agent_id) AS resolved_agent_id
     FROM traces t
@@ -76,15 +76,15 @@ function gatherTraceData(db, tenantId, dateFrom, dateTo, agentId, traceMode, eve
     LEFT JOIN cron_jobs cj ON cj.id = cr.cron_job_id
     WHERE t.tenant_id = ? AND t.ts BETWEEN ? AND ?
     ORDER BY t.ts ASC
-  `).all(tenantId, dateFrom, dateTo)
+  `, [tenantId, dateFrom, dateTo])
 
   return agents.map((agent) => {
     const humanOwnerId = agent.owner_type === 'agent'
       ? getHumanRoot(db, agent.id, tenantId)
       : agent.owner_id
-    const owner = db.prepare(
+    const owner = await db.get(
       'SELECT email FROM users WHERE id = ? AND tenant_id = ?'
-    ).get(humanOwnerId, tenantId)
+    , [humanOwnerId, tenantId])
     const ownerEmail = owner?.email || humanOwnerId || agent.owner_id || 'Unverified'
 
     const allTraces = traceRows
@@ -135,7 +135,7 @@ function gatherTraceData(db, tenantId, dateFrom, dateTo, agentId, traceMode, eve
       const id = typeof item === 'string' ? item : (item.id || item.contextFileId)
       if (!id) return item
       try {
-        const row = db.prepare('SELECT filename FROM context_files WHERE id = ?').get(id)
+        const row = await db.get('SELECT filename FROM context_files WHERE id = ?', [id])
         return row?.filename ? { id, filename: row.filename } : item
       } catch {
         return item
@@ -180,21 +180,21 @@ function collectReportData(db, {
   reportMode = traceMode,
   sectorTemplate = 'general',
 }) {
-  const tenant = db.prepare('SELECT id, name FROM tenants WHERE id = ?').get(tenantId)
-  const agents = db.prepare(
+  const tenant = await db.get('SELECT id, name FROM tenants WHERE id = ?', [tenantId])
+  const agents = await db.all(
     'SELECT * FROM agents WHERE tenant_id = ? ORDER BY name ASC'
-  ).all(tenantId)
+  , [tenantId])
     .filter((agent) => !agentId || agent.id === agentId)
 
-  const users = db.prepare(
+  const users = await db.all(
     'SELECT id, email, role FROM users WHERE tenant_id = ?'
-  ).all(tenantId)
+  , [tenantId])
   const usersById = new Map(users.map((user) => [user.id, user]))
   const agentsById = new Map(agents.map((agent) => [agent.id, agent]))
 
-  const rawEvents = db.prepare(
+  const rawEvents = await db.all(
     'SELECT * FROM audit_log WHERE tenant_id = ? AND ts BETWEEN ? AND ? ORDER BY ts ASC'
-  ).all(tenantId, dateFrom, dateTo)
+  , [tenantId, dateFrom, dateTo])
     .map((event) => ({
       ...event,
       metadata: parseJson(event.metadata),
@@ -278,7 +278,7 @@ function collectReportData(db, {
       } else {
         const chainNames = chain.map((linkId) => {
           const parentAgent = agentsById.get(linkId)
-            || db.prepare('SELECT name FROM agents WHERE id = ? AND tenant_id = ?').get(linkId, tenantId)
+            || await db.get('SELECT name FROM agents WHERE id = ? AND tenant_id = ?', [linkId, tenantId])
           return parentAgent?.name || linkId
         })
         const humanRoot = getHumanRoot(db, agent.id, tenantId)

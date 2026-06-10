@@ -262,51 +262,51 @@ custom_domains = ${subdomain}.tunnel.geteudora.com`,
       // SQLite page metrics remain available for in-memory or inaccessible files.
     }
 
-    const auditStats = db.prepare(`
+    const auditStats = await db.get(`
       SELECT
         COUNT(*) AS total_entries,
         MAX(ts) AS last_entry,
         MIN(ts) AS first_entry
       FROM audit_log
       WHERE tenant_id = ?
-    `).get(tenantId)
+    `, [tenantId])
 
-    const agentStats = db.prepare(`
+    const agentStats = await db.get(`
       SELECT
         COUNT(*) AS total,
         SUM(CASE WHEN agent_type = 'external' THEN 1 ELSE 0 END) AS external
       FROM agents
       WHERE tenant_id = ?
-    `).get(tenantId)
+    `, [tenantId])
 
-    const cronStats = db.prepare(`
+    const cronStats = await db.get(`
       SELECT
         COUNT(*) AS total,
         SUM(CASE WHEN enabled = 1 THEN 1 ELSE 0 END) AS active
       FROM cron_jobs
       WHERE tenant_id = ?
-    `).get(tenantId)
+    `, [tenantId])
 
-    const recentFailures = db.prepare(`
+    const recentFailures = await db.get(`
       SELECT COUNT(*) AS count
       FROM cron_runs
       WHERE tenant_id = ? AND status = 'failed' AND started_at > ?
-    `).get(tenantId, last24Hours)
+    `, [tenantId, last24Hours])
 
-    const riskEvents = db.prepare(`
+    const riskEvents = await db.get(`
       SELECT
         COUNT(*) AS total,
         SUM(CASE WHEN risk_score > 70 THEN 1 ELSE 0 END) AS high_risk,
         SUM(CASE WHEN action = 'dlp_detected' THEN 1 ELSE 0 END) AS dlp_events
       FROM audit_log
       WHERE tenant_id = ? AND ts > ?
-    `).get(tenantId, last24Hours)
+    `, [tenantId, last24Hours])
 
-    const traceStats = db.prepare(`
+    const traceStats = await db.get(`
       SELECT COUNT(*) AS total
       FROM traces
       WHERE tenant_id = ?
-    `).get(tenantId)
+    `, [tenantId])
 
     return reply.send({
       status: 'operational',

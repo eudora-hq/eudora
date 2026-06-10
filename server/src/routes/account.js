@@ -26,52 +26,52 @@ export default async function accountRoutes(fastify) {
 
   fastify.get('/export', async (request, reply) => {
     const tenantId = request.tenantId
-    const user = db.prepare(
+    const user = await db.get(
       'SELECT email FROM users WHERE id = ? AND tenant_id = ?'
-    ).get(request.user.userId, tenantId)
+    , [request.user.userId, tenantId])
     const tenantEmail = user?.email || 'unknown'
 
-    const agents = db.prepare(
+    const agents = await db.all(
       `SELECT id, name, purpose, model_provider, system_prompt, owner_type,
               owner_id, owner_chain, created_at
        FROM agents
        WHERE tenant_id = ?
        ORDER BY created_at DESC`
-    ).all(tenantId)
+    , [tenantId])
 
-    const contextFiles = db.prepare(
+    const contextFiles = await db.all(
       `SELECT id, agent_id, filename, tags, content_encrypted, content_iv, created_at, updated_at
        FROM context_files
        WHERE tenant_id = ?
        ORDER BY created_at DESC`
-    ).all(tenantId)
+    , [tenantId])
 
-    const auditLog = db.prepare(
+    const auditLog = await db.all(
       `SELECT id, user_id, action, context_hash, prompt_hash, response_hash,
               risk_score, metadata, ts, initiated_by_user_id, agent_chain
        FROM audit_log
        WHERE tenant_id = ?
        ORDER BY ts DESC`
-    ).all(tenantId).map((row) => ({
+    , [tenantId]).map((row) => ({
       ...row,
       metadata: parseJson(row.metadata, {}),
       agent_chain: parseJson(row.agent_chain, []),
     }))
 
-    const cronJobs = db.prepare(
+    const cronJobs = await db.all(
       `SELECT id, agent_id, name, prompt, schedule, preset, enabled,
               created_at, last_run_at, next_run_at
        FROM cron_jobs
        WHERE tenant_id = ?
        ORDER BY created_at DESC`
-    ).all(tenantId)
+    , [tenantId])
 
-    const conversations = db.prepare(
+    const conversations = await db.all(
       `SELECT id, agent_id, user_id, created_at
        FROM conversations
        WHERE tenant_id = ?
        ORDER BY created_at DESC`
-    ).all(tenantId)
+    , [tenantId])
     const messagesByConversation = db.prepare(
       `SELECT id, role, content, created_at
        FROM messages

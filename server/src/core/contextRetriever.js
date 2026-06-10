@@ -17,22 +17,22 @@ function parseEmbedding(row) {
 async function getQueryEmbeddings(db, tenantId, query, models) {
   const embeddings = new Map()
   const openAIKey = models.some(model => model.startsWith('openai:'))
-    ? db.prepare(`
+    ? await db.get(`
         SELECT key_encrypted, key_iv
         FROM api_keys
         WHERE tenant_id = ? AND provider = 'openai' AND key_encrypted IS NOT NULL
         ORDER BY created_at ASC
         LIMIT 1
-      `).get(tenantId)
+      `, [tenantId])
     : null
   const ollamaKey = models.some(model => model.startsWith('ollama:'))
-    ? db.prepare(`
+    ? await db.get(`
         SELECT base_url
         FROM api_keys
         WHERE tenant_id = ? AND provider = 'ollama' AND base_url IS NOT NULL
         ORDER BY created_at ASC
         LIMIT 1
-      `).get(tenantId)
+      `, [tenantId])
     : null
 
   for (const model of models) {

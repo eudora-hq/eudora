@@ -80,9 +80,9 @@ export async function registerReportVerificationRoute(fastify) {
   const db = fastify.db
 
   fastify.get('/:id/verify', async (request, reply) => {
-    const report = db.prepare(
+    const report = await db.get(
       'SELECT * FROM compliance_reports WHERE id = ? AND tenant_id = ?'
-    ).get(request.params.id, request.tenantId)
+    , [request.params.id, request.tenantId])
     if (!report) return reply.code(404).send({ error: 'report_not_found' })
 
     const path = reportPath(report.id)
@@ -140,11 +140,11 @@ export async function registerArticle50Routes(fastify) {
       params.push(sectorTemplate)
     }
 
-    const records = db.prepare(`
+    const records = await db.all(`
       SELECT * FROM article50_records
       WHERE ${clauses.join(' AND ')}
       ORDER BY interaction_timestamp DESC
-    `).all(...params)
+    `, params)
 
     const findRiskScore = db.prepare(`
       SELECT risk_score FROM audit_log
@@ -195,23 +195,21 @@ export async function registerArticle50Routes(fastify) {
     if (Number.isNaN(timestamp.getTime())) {
       return reply.code(400).send({ error: 'invalid_interaction_timestamp' })
     }
-    const agent = db.prepare('SELECT id FROM agents WHERE id = ? AND tenant_id = ?')
-      .get(agentId, request.tenantId)
+    const agent = await db.get('SELECT id FROM agents WHERE id = ? AND tenant_id = ?', [agentId, request.tenantId])
     if (!agent) return reply.code(404).send({ error: 'agent_not_found' })
 
     const regulationRefs = parseRegulationRefs(requestedRegulations, template.regulations)
     if (!regulationRefs) return reply.code(400).send({ error: 'invalid_regulation_refs' })
 
     const id = nanoid()
-    db.prepare(`
+    await db.query(`
       INSERT INTO article50_records (
         id, tenant_id, agent_id, run_id, interaction_timestamp,
         disclosure_made, disclosure_method, output_summary,
         sector_template, regulation_refs
       )
       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-    `).run(
-      id,
+    `, [id,
       request.tenantId,
       agentId,
       runId,
@@ -220,8 +218,7 @@ export async function registerArticle50Routes(fastify) {
       disclosureMethod,
       String(outputSummary).substring(0, 200),
       sectorTemplate,
-      JSON.stringify(regulationRefs)
-    )
+      JSON.stringify(regulationRefs)])
 
     return reply.code(201).send({
       id,
@@ -281,8 +278,7 @@ export default async function reportsRoutes(fastify) {
     }
 
     if (agentId) {
-      const agent = db.prepare('SELECT id FROM agents WHERE id = ? AND tenant_id = ?')
-        .get(agentId, request.tenantId)
+      const agent = await db.get('SELECT id FROM agents WHERE id = ? AND tenant_id = ?', [agentId, request.tenantId])
       if (!agent) return reply.code(404).send({ error: 'agent_not_found' })
     }
 
@@ -309,15 +305,14 @@ export default async function reportsRoutes(fastify) {
     })
 
     db.transaction(() => {
-      db.prepare(`
+      await db.query(`
         INSERT INTO compliance_reports
           (
             id, tenant_id, date_from, date_to, report_hash, generated_at, agent_id,
             timestamp_token, timestamp_status, timestamp_time, tsa_url, report_mode
           )
         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-      `).run(
-        reportId,
+      `, [reportId,
         request.tenantId,
         Number(dateFrom),
         Number(dateTo),
@@ -328,8 +323,7 @@ export default async function reportsRoutes(fastify) {
         timestampStatus,
         timestampTime,
         tsaUrl,
-        resolvedReportMode
-      )
+        resolvedReportMode])
 
       if (resolvedReportMode === 'article50') {
         const insertRecord = db.prepare(`
@@ -364,22 +358,22 @@ export default async function reportsRoutes(fastify) {
   })
 
   fastify.get('/', async (request) => {
-    return db.prepare(`
+    return await db.all(`
       SELECT
         id, date_from, date_to, report_hash, generated_at, agent_id,
         timestamp_status, timestamp_time, tsa_url, report_mode
       FROM compliance_reports
       WHERE tenant_id = ?
       ORDER BY generated_at DESC
-    `).all(request.tenantId)
+    `, [request.tenantId])
   })
 
   await registerReportVerificationRoute(fastify)
 
   fastify.get('/:id', async (request, reply) => {
-    const report = db.prepare(
+    const report = await db.get(
       'SELECT * FROM compliance_reports WHERE id = ? AND tenant_id = ?'
-    ).get(request.params.id, request.tenantId)
+    , [request.params.id, request.tenantId])
 
     if (!report) return reply.code(404).send({ error: 'report_not_found' })
 

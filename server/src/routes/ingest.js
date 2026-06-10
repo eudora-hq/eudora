@@ -17,13 +17,13 @@ function findProxyAgent(db, proxyKey) {
     return null
   }
 
-  const agent = db.prepare(`
+  const agent = await db.get(`
     SELECT *
     FROM agents
     WHERE ? LIKE proxy_key_prefix || '%'
       AND agent_type = 'external'
     LIMIT 1
-  `).get(proxyKey)
+  `, [proxyKey])
   if (!agent) return null
 
   try {
@@ -63,8 +63,7 @@ export default async function ingestRoutes(fastify) {
       return
     }
 
-    const tenant = db.prepare('SELECT * FROM tenants WHERE id = ?')
-      .get(agent.tenant_id)
+    const tenant = await db.get('SELECT * FROM tenants WHERE id = ?', [agent.tenant_id])
     if (!tenant) {
       reply.code(401).send({ error: 'unauthorized' })
       return
@@ -102,13 +101,13 @@ export default async function ingestRoutes(fastify) {
     const humanRoot = agent.owner_type === 'human'
       ? agent.owner_id
       : getHumanRoot(db, agent.id, agent.tenant_id)
-    const auditUser = humanRoot || agent.owner_id || db.prepare(`
+    const auditUser = humanRoot || agent.owner_id || await db.get(`
       SELECT id
       FROM users
       WHERE tenant_id = ?
       ORDER BY role = 'owner' DESC
       LIMIT 1
-    `).get(agent.tenant_id)?.id
+    `, [agent.tenant_id])?.id
 
     if (!auditUser) {
       return reply.code(400).send({ error: 'agent_has_no_accountable_user' })
@@ -122,14 +121,13 @@ export default async function ingestRoutes(fastify) {
     }
 
     const runId = nanoid()
-    db.prepare(`
+    await db.query(`
       INSERT INTO audit_log (
         id, tenant_id, user_id, action, prompt_hash, response_hash,
         risk_score, metadata, initiated_by_user_id, agent_chain, ts
       )
       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-    `).run(
-      runId,
+    `, [runId,
       agent.tenant_id,
       auditUser,
       `${source}_ingest`,
@@ -151,8 +149,7 @@ export default async function ingestRoutes(fastify) {
       }),
       auditUser,
       JSON.stringify([agent.id, ...ownerChain]),
-      Date.now()
-    )
+      Date.now()])
 
     return reply.send({ status: 'ok', run_id: runId })
   })

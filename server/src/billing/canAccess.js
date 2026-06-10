@@ -12,7 +12,7 @@ export function canAccess(db, tenantId, feature) {
     .get(tenantId, feature)
   if (row) return row.enabled === 1
 
-  const tenant = db.prepare('SELECT plan FROM tenants WHERE id = ?').get(tenantId)
+  const tenant = await db.get('SELECT plan FROM tenants WHERE id = ?', [tenantId])
   const featuresForPlan = FEATURES_BY_PLAN[normalizePlan(tenant?.plan)] || {}
   return featuresForPlan[feature] === true
 }
@@ -25,7 +25,7 @@ export function getUsage(db, tenantId, eventType, windowMs = null) {
     sql += ' AND ts > ?'
     params.push(Date.now() - windowMs)
   }
-  const row = db.prepare(sql).get(...params)
+  const row = await db.get(sql, params)
   return row?.total ?? 0
 }
 
@@ -45,8 +45,7 @@ export function isUnderAgentLimit(db, tenantId, plan) {
 
   const limit = TIER_LIMITS[normalizePlan(plan)]?.agents
   if (limit === undefined || limit === Infinity) return true
-  const used = db.prepare('SELECT COUNT(*) AS count FROM agents WHERE tenant_id = ?')
-    .get(tenantId).count
+  const used = await db.get('SELECT COUNT(*) AS count FROM agents WHERE tenant_id = ?', [tenantId]).count
   return used < limit
 }
 

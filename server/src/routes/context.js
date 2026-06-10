@@ -5,24 +5,24 @@ import { generateEmbeddingWithMetadata } from '../utils/embeddings.js'
 
 async function embedContextFile(db, fileId, tenantId, content) {
   const columns = new Set(
-    db.prepare('PRAGMA table_info(context_files)').all().map(column => column.name)
+    await db.all('PRAGMA table_info(context_files)').map(column => column.name)
   )
   if (!columns.has('embedding')) return
 
-  const openAIKey = db.prepare(`
+  const openAIKey = await db.get(`
     SELECT key_encrypted, key_iv
     FROM api_keys
     WHERE tenant_id = ? AND provider = 'openai' AND key_encrypted IS NOT NULL
     ORDER BY created_at ASC
     LIMIT 1
-  `).get(tenantId)
-  const ollamaKey = db.prepare(`
+  `, [tenantId])
+  const ollamaKey = await db.get(`
     SELECT base_url
     FROM api_keys
     WHERE tenant_id = ? AND provider = 'ollama' AND base_url IS NOT NULL
     ORDER BY created_at ASC
     LIMIT 1
-  `).get(tenantId)
+  `, [tenantId])
 
   let provider = 'ollama'
   let apiKey = null
@@ -39,17 +39,15 @@ async function embedContextFile(db, fileId, tenantId, content) {
     provider,
     baseUrl,
   })
-  db.prepare(`
+  await db.query(`
     UPDATE context_files
     SET embedding = ?, embedding_model = ?, embedded_at = ?
     WHERE id = ? AND tenant_id = ?
-  `).run(
-    JSON.stringify(result.embedding),
+  `, [JSON.stringify(result.embedding),
     result.model,
     Date.now(),
     fileId,
-    tenantId
-  )
+    tenantId])
 }
 
 export default async function contextRoutes(fastify) {
@@ -63,7 +61,7 @@ export default async function contextRoutes(fastify) {
     if (!filename) return reply.code(400).send({ error: 'filename is required' })
     if (!content) return reply.code(400).send({ error: 'content is required' })
 
-    const agent = db.prepare('SELECT id, tenant_id FROM agents WHERE id = ?').get(agentId)
+    const agent = await db.get('SELECT id, tenant_id FROM agents WHERE id = ?', [agentId])
     if (!agent) return reply.code(404).send({ error: 'agent_not_found' })
     if (agent.tenant_id !== request.tenantId) return reply.code(403).send({ error: 'forbidden' })
 
@@ -75,15 +73,15 @@ export default async function contextRoutes(fastify) {
 
     const id = nanoid()
     const now = Date.now()
-    db.prepare(`
+    await db.query(`
       INSERT INTO context_files
         (id, tenant_id, agent_id, filename, tags, content_encrypted, content_iv, created_at, updated_at)
       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-    `).run(id, request.tenantId, agentId, filename, JSON.stringify(tags), ciphertext, iv, now, now)
+    `, [id, request.tenantId, agentId, filename, JSON.stringify(tags), ciphertext, iv, now, now])
 
-    db.prepare(
+    await db.query(
       'INSERT INTO usage_events (id, tenant_id, event_type, value, ts) VALUES (?, ?, ?, ?, ?)'
-    ).run(nanoid(), request.tenantId, 'context_files', 1, now)
+    , [nanoid(), request.tenantId, 'context_files', 1, now])
 
     embedContextFile(db, id, request.tenantId, content).catch(err => {
       console.error('[embed] Failed to embed file:', err.message)
@@ -97,7 +95,7 @@ export default async function contextRoutes(fastify) {
     const { agentId } = request.query || {}
     if (!agentId) return reply.code(400).send({ error: 'agentId is required' })
 
-    const agent = db.prepare('SELECT id, tenant_id FROM agents WHERE id = ?').get(agentId)
+    const agent = await db.get('SELECT id, tenant_id FROM agents WHERE id = ?', [agentId])
     if (!agent) return reply.code(404).send({ error: 'agent_not_found' })
     if (agent.tenant_id !== request.tenantId) return reply.code(403).send({ error: 'forbidden' })
 
@@ -113,7 +111,7 @@ export default async function contextRoutes(fastify) {
   // GET /context/:id
   fastify.get('/:id', async (request, reply) => {
     const { id } = request.params
-    const row = db.prepare('SELECT * FROM context_files WHERE id = ?').get(id)
+    const row = await db.get('SELECT * FROM context_files WHERE id = ?', [id])
     if (!row) return reply.code(404).send({ error: 'not_found' })
     if (row.tenant_id !== request.tenantId) return reply.code(403).send({ error: 'forbidden' })
 
@@ -134,16 +132,14 @@ export default async function contextRoutes(fastify) {
     const { id } = request.params
     const { tags } = request.body || {}
 
-    const row = db.prepare('SELECT id, tenant_id, filename FROM context_files WHERE id = ?').get(id)
+    const row = await db.get('SELECT id, tenant_id, filename FROM context_files WHERE id = ?', [id])
     if (!row) return reply.code(404).send({ error: 'not_found' })
     if (row.tenant_id !== request.tenantId) return reply.code(403).send({ error: 'forbidden' })
 
     const updated_at = Date.now()
-    db.prepare('UPDATE context_files SET tags = ?, updated_at = ? WHERE id = ?').run(
-      JSON.stringify(tags),
+    await db.query('UPDATE context_files SET tags = ?, updated_at = ? WHERE id = ?', [JSON.stringify(tags),
       updated_at,
-      id
-    )
+      id])
 
     return reply.send({ id, filename: row.filename, tags, updated_at })
   })
@@ -151,11 +147,11 @@ export default async function contextRoutes(fastify) {
   // DELETE /context/:id
   fastify.delete('/:id', async (request, reply) => {
     const { id } = request.params
-    const row = db.prepare('SELECT id, tenant_id FROM context_files WHERE id = ?').get(id)
+    const row = await db.get('SELECT id, tenant_id FROM context_files WHERE id = ?', [id])
     if (!row) return reply.code(404).send({ error: 'not_found' })
     if (row.tenant_id !== request.tenantId) return reply.code(403).send({ error: 'forbidden' })
 
-    db.prepare('DELETE FROM context_files WHERE id = ?').run(id)
+    await db.query('DELETE FROM context_files WHERE id = ?', [id])
     return reply.send({ success: true })
   })
 }

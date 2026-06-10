@@ -37,28 +37,28 @@ export default async function analyticsRoutes(fastify) {
     const last30d = now - 30 * DAY_MS
     const prev30d = last30d - 30 * DAY_MS
 
-    const total30d = db.prepare(`
+    const total30d = await db.get(`
       SELECT COUNT(*) AS count
       FROM audit_log
       WHERE tenant_id = ? AND ts > ?
-    `).get(tenantId, last30d).count
+    `, [tenantId, last30d]).count
 
-    const prevTotal30d = db.prepare(`
+    const prevTotal30d = await db.get(`
       SELECT COUNT(*) AS count
       FROM audit_log
       WHERE tenant_id = ? AND ts BETWEEN ? AND ?
-    `).get(tenantId, prev30d, last30d).count
+    `, [tenantId, prev30d, last30d]).count
 
-    const eventSummary = db.prepare(`
+    const eventSummary = await db.get(`
       SELECT
         SUM(CASE WHEN risk_score > 20 THEN 1 ELSE 0 END) AS risk_events,
         SUM(CASE WHEN action IN ('guard_block', 'proxy_blocked') THEN 1 ELSE 0 END) AS blocked,
         SUM(CASE WHEN action = 'dlp_detected' THEN 1 ELSE 0 END) AS dlp
       FROM audit_log
       WHERE tenant_id = ? AND ts > ?
-    `).get(tenantId, last30d)
+    `, [tenantId, last30d])
 
-    const topAgents = db.prepare(`
+    const topAgents = await db.all(`
       SELECT
         a.id,
         a.name,
@@ -72,9 +72,9 @@ export default async function analyticsRoutes(fastify) {
       GROUP BY a.id, a.name
       ORDER BY interactions DESC, a.name ASC
       LIMIT 5
-    `).all(tenantId, last30d)
+    `, [tenantId, last30d])
 
-    const dailyRows = db.prepare(`
+    const dailyRows = await db.all(`
       SELECT
         date(ts / 1000, 'unixepoch') AS day,
         COUNT(*) AS interactions,
@@ -83,16 +83,16 @@ export default async function analyticsRoutes(fastify) {
       WHERE tenant_id = ? AND ts > ?
       GROUP BY day
       ORDER BY day ASC
-    `).all(tenantId, last30d)
+    `, [tenantId, last30d])
 
-    const riskDistribution = db.prepare(`
+    const riskDistribution = await db.get(`
       SELECT
         SUM(CASE WHEN risk_score <= 20 THEN 1 ELSE 0 END) AS nominal,
         SUM(CASE WHEN risk_score BETWEEN 21 AND 50 THEN 1 ELSE 0 END) AS elevated,
         SUM(CASE WHEN risk_score > 50 THEN 1 ELSE 0 END) AS critical
       FROM audit_log
       WHERE tenant_id = ? AND ts > ?
-    `).get(tenantId, last30d)
+    `, [tenantId, last30d])
 
     const trend = prevTotal30d > 0
       ? Math.round(((total30d - prevTotal30d) / prevTotal30d) * 100)
@@ -126,14 +126,14 @@ export default async function analyticsRoutes(fastify) {
     const tenantId = request.tenantId
     const last30d = Date.now() - 30 * DAY_MS
 
-    const agent = db.prepare(`
+    const agent = await db.get(`
       SELECT id, name
       FROM agents
       WHERE id = ? AND tenant_id = ?
-    `).get(agentId, tenantId)
+    `, [agentId, tenantId])
     if (!agent) return reply.code(404).send({ error: 'not_found' })
 
-    const stats = db.prepare(`
+    const stats = await db.get(`
       SELECT
         COUNT(*) AS total,
         ROUND(AVG(risk_score), 1) AS avg_risk,
@@ -144,9 +144,9 @@ export default async function analyticsRoutes(fastify) {
       WHERE tenant_id = ?
         AND ${agentIdExpression('audit_log')} = ?
         AND ts > ?
-    `).get(tenantId, agentId, last30d)
+    `, [tenantId, agentId, last30d])
 
-    const dailyRows = db.prepare(`
+    const dailyRows = await db.all(`
       SELECT
         date(ts / 1000, 'unixepoch') AS day,
         COUNT(*) AS interactions,
@@ -157,7 +157,7 @@ export default async function analyticsRoutes(fastify) {
         AND ts > ?
       GROUP BY day
       ORDER BY day ASC
-    `).all(tenantId, agentId, last30d)
+    `, [tenantId, agentId, last30d])
 
     return {
       agentId,

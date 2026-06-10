@@ -64,14 +64,14 @@ export default async function integrationsRoutes(fastify) {
   const db = fastify.db
 
   fastify.get('/', async (request) => {
-    return db.prepare(`
+    return await db.all(`
       SELECT
         id, type, name, status, last_sync_at, last_sync_status,
         last_sync_count, created_at
       FROM integrations
       WHERE tenant_id = ?
       ORDER BY created_at DESC
-    `).all(request.tenantId)
+    `, [request.tenantId])
   })
 
   fastify.post('/azure-openai/test', async (request, reply) => {
@@ -106,18 +106,16 @@ export default async function integrationsRoutes(fastify) {
 
     const id = nanoid()
     const createdAt = Date.now()
-    db.prepare(`
+    await db.query(`
       INSERT INTO integrations (
         id, tenant_id, type, name, config, status, created_at
       )
       VALUES (?, ?, 'azure_openai', ?, ?, 'active', ?)
-    `).run(
-      id,
+    `, [id,
       request.tenantId,
       name.trim(),
       encodeConfig(config),
-      createdAt
-    )
+      createdAt])
 
     return reply.code(201).send({
       id,
@@ -160,18 +158,16 @@ export default async function integrationsRoutes(fastify) {
 
     const id = nanoid()
     const createdAt = Date.now()
-    db.prepare(`
+    await db.query(`
       INSERT INTO integrations (
         id, tenant_id, type, name, config, status, created_at
       )
       VALUES (?, ?, 'github_copilot', ?, ?, 'active', ?)
-    `).run(
-      id,
+    `, [id,
       request.tenantId,
       name.trim(),
       encodeConfig(config),
-      createdAt
-    )
+      createdAt])
 
     return reply.code(201).send({
       id,
@@ -185,11 +181,11 @@ export default async function integrationsRoutes(fastify) {
   fastify.post('/:id/sync', async (request, reply) => {
     if (!requireIntegrationAdmin(request, reply)) return
 
-    const integration = db.prepare(`
+    const integration = await db.get(`
       SELECT *
       FROM integrations
       WHERE id = ? AND tenant_id = ?
-    `).get(request.params.id, request.tenantId)
+    `, [request.params.id, request.tenantId])
     if (!integration) return reply.code(404).send({ error: 'not_found' })
     if (!['azure_openai', 'github_copilot'].includes(integration.type)) {
       return reply.code(400).send({ error: 'unsupported_integration' })
@@ -243,11 +239,11 @@ export default async function integrationsRoutes(fastify) {
       importEvents()
 
       const syncedAt = Date.now()
-      db.prepare(`
+      await db.query(`
         UPDATE integrations
         SET last_sync_at = ?, last_sync_status = 'success', last_sync_count = ?
         WHERE id = ? AND tenant_id = ?
-      `).run(syncedAt, imported, integration.id, request.tenantId)
+      `, [syncedAt, imported, integration.id, request.tenantId])
 
       if (imported > 0) {
         const providerName = source === 'github_copilot'
@@ -265,11 +261,11 @@ export default async function integrationsRoutes(fastify) {
       return reply.send({ imported, total: events.length, syncedAt })
     } catch (error) {
       const status = `failed: ${error.message.substring(0, 100)}`
-      db.prepare(`
+      await db.query(`
         UPDATE integrations
         SET last_sync_at = ?, last_sync_status = ?, last_sync_count = 0
         WHERE id = ? AND tenant_id = ?
-      `).run(Date.now(), status, integration.id, request.tenantId)
+      `, [Date.now(), status, integration.id, request.tenantId])
 
       return reply.code(500).send({
         error: 'sync_failed',
@@ -281,8 +277,7 @@ export default async function integrationsRoutes(fastify) {
   fastify.delete('/:id', async (request, reply) => {
     if (!requireIntegrationAdmin(request, reply)) return
 
-    db.prepare('DELETE FROM integrations WHERE id = ? AND tenant_id = ?')
-      .run(request.params.id, request.tenantId)
+    await db.query('DELETE FROM integrations WHERE id = ? AND tenant_id = ?', [request.params.id, request.tenantId])
     return reply.send({ deleted: true })
   })
 }

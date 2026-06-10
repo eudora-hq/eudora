@@ -33,7 +33,7 @@ function validateSchedule(schedule, reply) {
 }
 
 function findJobForTenant(db, id, tenantId, reply) {
-  const job = db.prepare('SELECT * FROM cron_jobs WHERE id = ?').get(id)
+  const job = await db.get('SELECT * FROM cron_jobs WHERE id = ?', [id])
   if (!job) {
     reply.code(404).send({ error: 'cron_job_not_found' })
     return null
@@ -90,12 +90,11 @@ export default async function cronRoutes(fastify) {
     const createdAt = Date.now()
     const nextRunAt = interval.next().getTime()
 
-    db.prepare(
+    await db.query(
       `INSERT INTO cron_jobs
         (id, tenant_id, agent_id, name, prompt, schedule, preset, enabled, created_at, next_run_at)
        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
-    ).run(
-      id,
+    , [id,
       request.tenantId,
       agentId,
       name,
@@ -104,18 +103,17 @@ export default async function cronRoutes(fastify) {
       preset || null,
       1,
       createdAt,
-      nextRunAt
-    )
+      nextRunAt])
 
-    const newJob = db.prepare('SELECT * FROM cron_jobs WHERE id = ?').get(id)
+    const newJob = await db.get('SELECT * FROM cron_jobs WHERE id = ?', [id])
     await registerCronJob(newJob)
 
-    db.prepare(
+    await db.query(
       'INSERT INTO usage_events (id, tenant_id, event_type, value, ts) VALUES (?, ?, ?, ?, ?)'
-    ).run(nanoid(), request.tenantId, 'cron_job_created', 1, Date.now())
-    db.prepare(
+    , [nanoid(), request.tenantId, 'cron_job_created', 1, Date.now()])
+    await db.query(
       'INSERT INTO usage_events (id, tenant_id, event_type, value, ts) VALUES (?, ?, ?, ?, ?)'
-    ).run(nanoid(), request.tenantId, 'cron_jobs', 1, Date.now())
+    , [nanoid(), request.tenantId, 'cron_jobs', 1, Date.now()])
 
     return reply.code(201).send({
       id,
@@ -194,7 +192,7 @@ export default async function cronRoutes(fastify) {
       .all(job.id, request.tenantId, numericLimit, offset)
 
     const runs = rows.map((run) => {
-      const trace = db.prepare('SELECT id FROM traces WHERE cron_run_id = ? LIMIT 1').get(run.id)
+      const trace = await db.get('SELECT id FROM traces WHERE cron_run_id = ? LIMIT 1', [run.id])
       return {
         id: run.id,
         status: run.status,
@@ -270,7 +268,7 @@ export default async function cronRoutes(fastify) {
       nextRunAt = interval.next().getTime()
     }
 
-    db.prepare(
+    await db.query(
       `UPDATE cron_jobs SET
         name = COALESCE(?, name),
         prompt = COALESCE(?, prompt),
@@ -279,18 +277,16 @@ export default async function cronRoutes(fastify) {
         enabled = COALESCE(?, enabled),
         next_run_at = COALESCE(?, next_run_at)
        WHERE id = ? AND tenant_id = ?`
-    ).run(
-      name ?? null,
+    , [name ?? null,
       prompt ?? null,
       schedule ?? null,
       preset ?? null,
       enabled === undefined ? null : Number(enabled),
       nextRunAt,
       request.params.id,
-      request.tenantId
-    )
+      request.tenantId])
 
-    const updatedJob = db.prepare('SELECT * FROM cron_jobs WHERE id = ?').get(request.params.id)
+    const updatedJob = await db.get('SELECT * FROM cron_jobs WHERE id = ?', [request.params.id])
     if (schedule !== undefined || enabled !== undefined) {
       await deregisterCronJob(job.id)
       await registerCronJob(updatedJob)
@@ -304,7 +300,7 @@ export default async function cronRoutes(fastify) {
     if (!job) return reply
 
     await deregisterCronJob(job.id)
-    db.prepare('DELETE FROM cron_jobs WHERE id = ? AND tenant_id = ?').run(job.id, request.tenantId)
+    await db.query('DELETE FROM cron_jobs WHERE id = ? AND tenant_id = ?', [job.id, request.tenantId])
     return reply.code(200).send({ success: true })
   })
 }
