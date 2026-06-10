@@ -21,18 +21,40 @@ export default function Header() {
   const trialDaysLeft = trialEndsAt ? Math.max(0, Math.ceil((trialEndsAt - Date.now()) / (24 * 60 * 60 * 1000))) : null;
 
   useEffect(() => {
-    const fetchNotifications = () => {
+    const fetchNotifications = (event) => {
       api.get('/notifications')
-        .then((response) => {
-          setNotifications(response.data.notifications || []);
-          setUnreadCount(response.data.unreadCount || 0);
+        .then(async (response) => {
+          let nextNotifications = response.data.notifications || [];
+          const actionUrl = event?.detail?.actionUrl;
+          const matchingUnread = actionUrl
+            ? nextNotifications.filter(notification => (
+              !notification.read && notification.action_url === actionUrl
+            ))
+            : [];
+
+          if (matchingUnread.length) {
+            await Promise.allSettled(
+              matchingUnread.map(notification => api.post(`/notifications/${notification.id}/read`))
+            );
+            const matchingIds = new Set(matchingUnread.map(notification => notification.id));
+            nextNotifications = nextNotifications.map(notification => (
+              matchingIds.has(notification.id) ? { ...notification, read: 1 } : notification
+            ));
+          }
+
+          setNotifications(nextNotifications);
+          setUnreadCount(nextNotifications.filter(notification => !notification.read).length);
         })
         .catch(() => {});
     };
 
     fetchNotifications();
+    window.addEventListener('eudora:notifications-refresh', fetchNotifications);
     const interval = setInterval(fetchNotifications, 30000);
-    return () => clearInterval(interval);
+    return () => {
+      clearInterval(interval);
+      window.removeEventListener('eudora:notifications-refresh', fetchNotifications);
+    };
   }, []);
 
   useEffect(() => {

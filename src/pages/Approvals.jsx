@@ -14,6 +14,8 @@ export default function Approvals() {
   const [expanded, setExpanded] = useState(false)
   const [loading, setLoading] = useState(true)
   const [submitting, setSubmitting] = useState('')
+  const [decisionSuccess, setDecisionSuccess] = useState('')
+  const [decisionError, setDecisionError] = useState('')
   const [error, setError] = useState('')
   const [, setClock] = useState(Date.now())
 
@@ -57,26 +59,34 @@ export default function Approvals() {
     setSelected(res.data)
     setReason('')
     setExpanded(false)
+    setDecisionSuccess('')
+    setDecisionError('')
   }
 
   const decide = async (decision) => {
     if (!selected || reason.trim().length < 10) {
-      setError('Enter a reason of at least 10 characters.')
+      setDecisionError('Enter a reason of at least 10 characters.')
       return
     }
     setSubmitting(decision)
-    setError('')
+    setDecisionSuccess('')
+    setDecisionError('')
     try {
       const res = await api.post(`/v1/approvals/${selected.id}/decide`, {
         decision,
         reason: reason.trim(),
       })
-      setSelected(res.data)
+      setDecisionSuccess(decision)
+      window.dispatchEvent(new CustomEvent('eudora:notifications-refresh', {
+        detail: { actionUrl: `/approvals/${selected.id}` },
+      }))
+      await new Promise(resolve => setTimeout(resolve, 1500))
+      await load()
       setReason('')
       setTab(res.data.status === 'pending' ? 'pending' : 'resolved')
-      await load()
+      setDecisionSuccess('')
     } catch (err) {
-      setError(err.response?.data?.message || err.response?.data?.error || 'Decision failed')
+      setDecisionError(err.response?.data?.message || err.response?.data?.error || 'Decision failed')
     } finally {
       setSubmitting('')
     }
@@ -174,15 +184,26 @@ export default function Approvals() {
                         placeholder="Explain why this action should proceed or be blocked..."
                         className="w-full min-h-[110px] bg-[#050505] border border-[#262626] p-3 text-white font-mono text-[11px] resize-y focus:outline-none focus:border-amber-400" />
                       <p className="font-mono text-[8px] text-text-muted mt-1">{reason.trim().length}/10 minimum</p>
+                      {decisionError && (
+                        <p className="font-mono text-[9px] text-red-400 mt-2">{decisionError}</p>
+                      )}
                     </div>
                     <div className="grid grid-cols-2 gap-3">
-                      <button onClick={() => decide('approved')} disabled={submitting || reason.trim().length < 10}
+                      <button onClick={() => decide('approved')} disabled={submitting || decisionSuccess || reason.trim().length < 10}
                         className="bg-primary text-[#050505] py-3 font-mono text-[10px] font-bold uppercase tracking-widest disabled:opacity-40">
-                        {submitting === 'approved' ? 'Approving...' : 'Approve'}
+                        {submitting === 'approved'
+                          ? 'Approving...'
+                          : decisionSuccess === 'approved'
+                            ? 'Approved ✓'
+                            : 'Approve'}
                       </button>
-                      <button onClick={() => decide('rejected')} disabled={submitting || reason.trim().length < 10}
+                      <button onClick={() => decide('rejected')} disabled={submitting || decisionSuccess || reason.trim().length < 10}
                         className="border border-red-500/40 text-red-400 py-3 font-mono text-[10px] font-bold uppercase tracking-widest disabled:opacity-40">
-                        {submitting === 'rejected' ? 'Rejecting...' : 'Reject'}
+                        {submitting === 'rejected'
+                          ? 'Rejecting...'
+                          : decisionSuccess === 'rejected'
+                            ? 'Rejected ✓'
+                            : 'Reject'}
                       </button>
                     </div>
                   </>

@@ -702,9 +702,9 @@ function WorkflowEditor({ workflowId }) {
     markDirty();
   };
 
-  const updateNodeConfig = (key, value) => {
-    if (!selectedNodeId) return;
-    setNodes((nds) => nds.map(node => node.id === selectedNodeId ? {
+  const updateNodeConfig = (nodeId, key, value) => {
+    if (!nodeId) return;
+    setNodes((nds) => nds.map(node => node.id === nodeId ? {
       ...node,
       data: {
         ...node.data,
@@ -712,6 +712,21 @@ function WorkflowEditor({ workflowId }) {
           ...(node.data.config || {}),
           [key]: value,
         },
+      },
+    } : node));
+    markDirty();
+  };
+
+  const updateAgentNode = (nodeId, agentId) => {
+    const agent = agentById.get(agentId);
+    if (!nodeId || !agent) return;
+    setNodes((nds) => nds.map(node => node.id === nodeId ? {
+      ...node,
+      data: {
+        ...node.data,
+        agentId,
+        agent,
+        label: agent.name,
       },
     } : node));
     markDirty();
@@ -899,7 +914,19 @@ function WorkflowEditor({ workflowId }) {
                   <h3 className="font-mono text-[14px] text-white uppercase font-bold tracking-widest mb-2">{selectedAgent?.name || selectedNode.data.label}</h3>
                   <p className="font-mono text-[10px] text-text-muted leading-relaxed">{selectedAgent?.purpose || selectedDefinition?.description || 'No purpose configured.'}</p>
                   {selectedNode.type === 'agent' && (
-                    <Link to="/agents" className="font-mono text-[10px] text-primary uppercase tracking-widest mt-4 block hover:underline">View agent settings →</Link>
+                    <div className="space-y-3 mt-4">
+                      <label className="font-mono text-[9px] text-text-muted uppercase tracking-widest block">Agent</label>
+                      <select
+                        value={selectedNode.data.agentId || ''}
+                        onChange={(event) => updateAgentNode(selectedNode.id, event.target.value)}
+                        className="w-full bg-[#050505] border border-[#262626] text-white font-mono text-[11px] px-3 py-2 focus:outline-none focus:border-primary"
+                      >
+                        {agents.map(agent => (
+                          <option key={agent.id} value={agent.id}>{agent.name}</option>
+                        ))}
+                      </select>
+                      <Link to="/agents" className="font-mono text-[10px] text-primary uppercase tracking-widest block hover:underline">View agent settings →</Link>
+                    </div>
                   )}
                 </div>
 
@@ -908,7 +935,7 @@ function WorkflowEditor({ workflowId }) {
                     <label className="font-mono text-[9px] text-text-muted uppercase tracking-widest block">URL</label>
                     <input
                       value={selectedNode.data.config?.url || ''}
-                      onChange={(event) => updateNodeConfig('url', event.target.value)}
+                      onChange={(event) => updateNodeConfig(selectedNode.id, 'url', event.target.value)}
                       placeholder={NODE_DEFINITIONS.fetch_url.config.url.placeholder}
                       className="w-full bg-[#050505] border border-[#262626] text-white font-mono text-[11px] px-3 py-2 focus:outline-none focus:border-primary placeholder:text-[#404040]"
                     />
@@ -921,42 +948,42 @@ function WorkflowEditor({ workflowId }) {
                     <ConfigInput
                       field={NODE_DEFINITIONS.fetch_api.config.url}
                       value={selectedNode.data.config?.url || ''}
-                      onChange={(value) => updateNodeConfig('url', value)}
+                      onChange={(value) => updateNodeConfig(selectedNode.id, 'url', value)}
                     />
                     <ConfigInput
                       field={NODE_DEFINITIONS.fetch_api.config.method}
                       value={selectedNode.data.config?.method || 'GET'}
-                      onChange={(value) => updateNodeConfig('method', value)}
+                      onChange={(value) => updateNodeConfig(selectedNode.id, 'method', value)}
                     />
                     <ConfigInput
                       field={NODE_DEFINITIONS.fetch_api.config.authType}
                       value={selectedNode.data.config?.authType || 'none'}
-                      onChange={(value) => updateNodeConfig('authType', value)}
+                      onChange={(value) => updateNodeConfig(selectedNode.id, 'authType', value)}
                     />
                     {(selectedNode.data.config?.authType || 'none') !== 'none' && (
                       <ConfigInput
                         field={NODE_DEFINITIONS.fetch_api.config.authValue}
                         value={selectedNode.data.config?.authValue || ''}
-                        onChange={(value) => updateNodeConfig('authValue', value)}
+                        onChange={(value) => updateNodeConfig(selectedNode.id, 'authValue', value)}
                       />
                     )}
                     {selectedNode.data.config?.authType === 'apikey' && (
                       <ConfigInput
                         field={NODE_DEFINITIONS.fetch_api.config.authHeader}
                         value={selectedNode.data.config?.authHeader || ''}
-                        onChange={(value) => updateNodeConfig('authHeader', value)}
+                        onChange={(value) => updateNodeConfig(selectedNode.id, 'authHeader', value)}
                       />
                     )}
                     <ConfigInput
                       field={NODE_DEFINITIONS.fetch_api.config.headers}
                       value={selectedNode.data.config?.headers || ''}
-                      onChange={(value) => updateNodeConfig('headers', value)}
+                      onChange={(value) => updateNodeConfig(selectedNode.id, 'headers', value)}
                     />
                     {(selectedNode.data.config?.method || 'GET') !== 'GET' && (
                       <ConfigInput
                         field={NODE_DEFINITIONS.fetch_api.config.body}
                         value={selectedNode.data.config?.body || ''}
-                        onChange={(value) => updateNodeConfig('body', value)}
+                        onChange={(value) => updateNodeConfig(selectedNode.id, 'body', value)}
                       />
                     )}
                   </div>
@@ -967,12 +994,12 @@ function WorkflowEditor({ workflowId }) {
                     <ConfigInput
                       field={NODE_DEFINITIONS.fetch_rss.config.url}
                       value={selectedNode.data.config?.url || ''}
-                      onChange={(value) => updateNodeConfig('url', value)}
+                      onChange={(value) => updateNodeConfig(selectedNode.id, 'url', value)}
                     />
                     <ConfigInput
                       field={NODE_DEFINITIONS.fetch_rss.config.maxItems}
                       value={selectedNode.data.config?.maxItems || '10'}
-                      onChange={(value) => updateNodeConfig('maxItems', value)}
+                      onChange={(value) => updateNodeConfig(selectedNode.id, 'maxItems', value)}
                     />
                     <p className="font-mono text-[9px] text-text-muted/70 leading-relaxed">Leave the URL empty to use the previous node output.</p>
                   </div>
@@ -983,29 +1010,29 @@ function WorkflowEditor({ workflowId }) {
                     <ConfigInput
                       field={NODE_DEFINITIONS.webhook_out.config.url}
                       value={selectedNode.data.config?.url || ''}
-                      onChange={(value) => updateNodeConfig('url', value)}
+                      onChange={(value) => updateNodeConfig(selectedNode.id, 'url', value)}
                     />
                     <ConfigInput
                       field={NODE_DEFINITIONS.webhook_out.config.payloadMode}
                       value={selectedNode.data.config?.payloadMode || 'auto'}
-                      onChange={(value) => updateNodeConfig('payloadMode', value)}
+                      onChange={(value) => updateNodeConfig(selectedNode.id, 'payloadMode', value)}
                     />
                     {selectedNode.data.config?.payloadMode === 'custom' && (
                       <ConfigInput
                         field={NODE_DEFINITIONS.webhook_out.config.customPayload}
                         value={selectedNode.data.config?.customPayload || ''}
-                        onChange={(value) => updateNodeConfig('customPayload', value)}
+                        onChange={(value) => updateNodeConfig(selectedNode.id, 'customPayload', value)}
                       />
                     )}
                     <ConfigInput
                       field={NODE_DEFINITIONS.webhook_out.config.secret}
                       value={selectedNode.data.config?.secret || ''}
-                      onChange={(value) => updateNodeConfig('secret', value)}
+                      onChange={(value) => updateNodeConfig(selectedNode.id, 'secret', value)}
                     />
                     <ConfigInput
                       field={NODE_DEFINITIONS.webhook_out.config.headers}
                       value={selectedNode.data.config?.headers || ''}
-                      onChange={(value) => updateNodeConfig('headers', value)}
+                      onChange={(value) => updateNodeConfig(selectedNode.id, 'headers', value)}
                     />
                   </div>
                 )}
@@ -1015,27 +1042,27 @@ function WorkflowEditor({ workflowId }) {
                     <ConfigInput
                       field={NODE_DEFINITIONS.send_email.config.to}
                       value={selectedNode.data.config?.to || ''}
-                      onChange={(value) => updateNodeConfig('to', value)}
+                      onChange={(value) => updateNodeConfig(selectedNode.id, 'to', value)}
                     />
                     <ConfigInput
                       field={NODE_DEFINITIONS.send_email.config.subject}
                       value={selectedNode.data.config?.subject || ''}
-                      onChange={(value) => updateNodeConfig('subject', value)}
+                      onChange={(value) => updateNodeConfig(selectedNode.id, 'subject', value)}
                     />
                     <ConfigInput
                       field={NODE_DEFINITIONS.send_email.config.from}
                       value={selectedNode.data.config?.from || ''}
-                      onChange={(value) => updateNodeConfig('from', value)}
+                      onChange={(value) => updateNodeConfig(selectedNode.id, 'from', value)}
                     />
                     <ConfigInput
                       field={NODE_DEFINITIONS.send_email.config.fromName}
                       value={selectedNode.data.config?.fromName || ''}
-                      onChange={(value) => updateNodeConfig('fromName', value)}
+                      onChange={(value) => updateNodeConfig(selectedNode.id, 'fromName', value)}
                     />
                     <ConfigInput
                       field={NODE_DEFINITIONS.send_email.config.htmlMode}
                       value={selectedNode.data.config?.htmlMode || 'false'}
-                      onChange={(value) => updateNodeConfig('htmlMode', value)}
+                      onChange={(value) => updateNodeConfig(selectedNode.id, 'htmlMode', value)}
                     />
                   </div>
                 )}
@@ -1053,7 +1080,7 @@ function WorkflowEditor({ workflowId }) {
                         max="100"
                         step="5"
                         value={selectedNode.data.config?.risk_threshold ?? 70}
-                        onChange={(event) => updateNodeConfig('risk_threshold', Number(event.target.value))}
+                        onChange={(event) => updateNodeConfig(selectedNode.id, 'risk_threshold', Number(event.target.value))}
                         className="w-full accent-amber-400"
                       />
                     </div>
@@ -1064,7 +1091,7 @@ function WorkflowEditor({ workflowId }) {
                         min="1"
                         max="5"
                         value={selectedNode.data.config?.required_approvers ?? 1}
-                        onChange={(event) => updateNodeConfig('required_approvers', Math.min(5, Math.max(1, Number(event.target.value))))}
+                        onChange={(event) => updateNodeConfig(selectedNode.id, 'required_approvers', Math.min(5, Math.max(1, Number(event.target.value))))}
                         className="w-full bg-[#050505] border border-[#262626] text-white font-mono text-[11px] px-3 py-2 focus:outline-none focus:border-amber-400"
                       />
                     </div>
@@ -1085,6 +1112,7 @@ function WorkflowEditor({ workflowId }) {
                                 checked={selected}
                                 onChange={() => {
                                   updateNodeConfig(
+                                    selectedNode.id,
                                     'approver_user_ids',
                                     selected
                                       ? configuredIds.filter(id => id !== member.id)
@@ -1105,17 +1133,17 @@ function WorkflowEditor({ workflowId }) {
                     <ConfigInput
                       field={NODE_DEFINITIONS.human_approval.config.timeout_minutes}
                       value={String(selectedNode.data.config?.timeout_minutes || '60')}
-                      onChange={(value) => updateNodeConfig('timeout_minutes', Number(value))}
+                      onChange={(value) => updateNodeConfig(selectedNode.id, 'timeout_minutes', Number(value))}
                     />
                     <ConfigInput
                       field={NODE_DEFINITIONS.human_approval.config.on_timeout}
                       value={selectedNode.data.config?.on_timeout || 'reject'}
-                      onChange={(value) => updateNodeConfig('on_timeout', value)}
+                      onChange={(value) => updateNodeConfig(selectedNode.id, 'on_timeout', value)}
                     />
                     <ConfigInput
                       field={NODE_DEFINITIONS.human_approval.config.approval_message}
                       value={selectedNode.data.config?.approval_message || ''}
-                      onChange={(value) => updateNodeConfig('approval_message', value)}
+                      onChange={(value) => updateNodeConfig(selectedNode.id, 'approval_message', value)}
                     />
                   </div>
                 )}
