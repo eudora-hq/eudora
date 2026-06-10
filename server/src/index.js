@@ -32,7 +32,9 @@ import notificationsRoutes from './routes/notifications.js'
 import integrationsRoutes from './routes/integrations.js'
 import analyticsRoutes from './routes/analytics.js'
 import ingestRoutes from './routes/ingest.js'
+import approvalsRoutes from './routes/approvals.js'
 import { loadAllJobs } from './scheduler/cronRunner.js'
+import { startApprovalMonitor } from './services/approvalGates.js'
 
 const PORT = process.env.PORT || 3001
 const tunnelTokens = new Map()
@@ -70,6 +72,7 @@ async function start() {
   runMigrations(db)
   loadAllJobs()
   console.log('[startup] Cron scheduler loaded')
+  startApprovalMonitor(db, fastify.log)
   fastify.decorate('db', db)
 
   // Public routes: no token required
@@ -133,6 +136,7 @@ async function start() {
   fastify.register(integrationsRoutes, { prefix: '/integrations' })
   fastify.register(analyticsRoutes, { prefix: '/analytics' })
   fastify.register(ingestRoutes, { prefix: '/v1' })
+  fastify.register(approvalsRoutes, { prefix: '/v1/approvals' })
   if (process.env.ENABLE_ADMIN === 'true') {
     const { default: adminRoutes } = await import('./routes/admin.js')
     await fastify.register(adminRoutes, { prefix: '/admin' })

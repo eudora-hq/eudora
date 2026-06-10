@@ -3,6 +3,7 @@ import { useTierLimits } from '../hooks/useTierLimits';
 import { useSelfHosted } from '../hooks/useSelfHosted';
 import api from '../api/client'
 import { PlanModal } from '../components/PlanModal';
+import { useNavigate } from 'react-router-dom';
 
 const METRICS = [
   ['agents', 'Agents', 'smart_toy'],
@@ -12,15 +13,20 @@ const METRICS = [
 ];
 
 export default function Dashboard() {
+  const navigate = useNavigate();
   const { usage, loading } = useTierLimits();
   const isSelfHosted = useSelfHosted();
   const [activity, setActivity] = useState([]);
   const [showPlanModal, setShowPlanModal] = useState(false);
+  const [pendingApprovals, setPendingApprovals] = useState(0);
 
   useEffect(() => {
     api.get('/audit', { params: { limit: 5 } })
       .then(res => setActivity(res.data.events || []))
       .catch(() => setActivity([]));
+    api.get('/v1/approvals/stats')
+      .then(res => setPendingApprovals(res.data.pending || 0))
+      .catch(() => setPendingApprovals(0));
   }, []);
 
   const plan = usage?.plan || 'trial';
@@ -56,6 +62,26 @@ export default function Dashboard() {
         )}
         {loading && <span className="font-mono text-[10px] text-text-muted uppercase tracking-widest">LOADING USAGE...</span>}
       </div>
+
+      <button
+        onClick={() => navigate('/approvals')}
+        className={`border p-5 flex items-center justify-between text-left transition-colors ${
+          pendingApprovals > 0
+            ? 'border-amber-500/40 bg-amber-500/5 hover:border-amber-400'
+            : 'border-[#262626] bg-[#0a0a0a] hover:border-[#404040]'
+        }`}
+      >
+        <div className="flex items-center gap-3">
+          <span className={`material-symbols-outlined text-[22px] ${pendingApprovals > 0 ? 'text-amber-400' : 'text-text-muted'}`}>shield_person</span>
+          <div>
+            <p className="font-mono text-[11px] text-white uppercase font-bold tracking-widest">Pending Approvals</p>
+            <p className="font-mono text-[9px] text-text-muted mt-1">High-risk actions awaiting human oversight</p>
+          </div>
+        </div>
+        <span className={`font-mono text-[24px] font-bold ${pendingApprovals > 0 ? 'text-amber-400' : 'text-text-muted'}`}>
+          {pendingApprovals}
+        </span>
+      </button>
 
       <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-5 gap-6">
         {METRICS.map(([key, label, icon]) => {

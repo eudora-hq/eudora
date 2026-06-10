@@ -8,8 +8,16 @@ import { relay } from '../core/modelRelay.js'
 import { enforceScope } from '../security/scopeEnforcer.js'
 import { score } from '../security/riskScorer.js'
 import { log, AUDIT_ACTIONS } from '../audit/auditLogger.js'
+import { createApprovalGate } from '../services/approvalGates.js'
 
-export async function executeWorkflow(workflowId, tenantId, db, runId = null, initiatedByUserId = null) {
+export async function executeWorkflow(
+  workflowId,
+  tenantId,
+  db,
+  runId = null,
+  initiatedByUserId = null,
+  options = {}
+) {
   const workflow = db
     .prepare('SELECT * FROM workflows WHERE id = ? AND tenant_id = ?')
     .get(workflowId, tenantId)
@@ -19,20 +27,37 @@ export async function executeWorkflow(workflowId, tenantId, db, runId = null, in
   const activeRunId = runId || getRunningRunId(db, workflowId, tenantId) || nanoid()
   const nodes = JSON.parse(workflow.nodes || '[]')
   const edges = JSON.parse(workflow.edges || '[]')
-  const results = []
+  const existingRun = db.prepare(
+    'SELECT node_results FROM workflow_runs WHERE id = ? AND tenant_id = ?'
+  ).get(activeRunId, tenantId)
+  const persistedResults = JSON.parse(existingRun?.node_results || '[]')
+  const results = options.resumeGateId
+    ? persistedResults.filter(result => result.gateId !== options.resumeGateId)
+    : []
   const context = {
     workflow,
     workflowId,
+    runId: activeRunId,
+    initiatedByUserId,
+    resumeGateId: options.resumeGateId || null,
     urlFetchCount: 0,
     maxUrlFetches: 10,
   }
 
   try {
     const graph = buildGraph(nodes, edges)
-    const completed = new Set()
-    const skipped = new Set()
-    const outputs = new Map()
-    const queue = graph.startNodes.slice()
+    context.graph = graph
+    const completed = new Set(
+      results
+        .filter(result => ['success', 'auto_approved'].includes(result.status))
+        .map(result => result.nodeId)
+    )
+    const skipped = new Set(
+      results.filter(result => result.status === 'skipped').map(result => result.nodeId)
+    )
+    const outputs = new Map(results.map(result => [result.nodeId, result.output || '']))
+    const riskScores = new Map(results.map(result => [result.nodeId, result.riskScore || 0]))
+    const queue = options.resumeGateId ? nodes.map(node => node.id) : graph.startNodes.slice()
 
     while (queue.length > 0) {
       const nodeId = queue.shift()
@@ -63,9 +88,28 @@ export async function executeWorkflow(workflowId, tenantId, db, runId = null, in
         })
       } else {
         const input = buildNodeInput(nodeId, workflow.description, predecessors, outputs)
+        const upstreamResults = predecessors
+          .map(edge => results.find(result => result.nodeId === edge.source))
+          .filter(Boolean)
+        context.currentRiskScore = Math.max(
+          0,
+          ...predecessors.map(edge => riskScores.get(edge.source) || 0)
+        )
+        context.upstreamAgentId = upstreamResults.find(result => result.agentId)?.agentId || null
         const result = await executeNode(node, input, tenantId, db, context)
         results.push(result)
         outputs.set(nodeId, result.output)
+        riskScores.set(nodeId, result.riskScore || 0)
+
+        if (result.status === 'pending_approval') {
+          db.prepare(`
+            UPDATE workflow_runs
+            SET status = 'pending_approval', node_results = ?, completed_at = NULL
+            WHERE id = ? AND tenant_id = ?
+          `).run(JSON.stringify(results), activeRunId, tenantId)
+          return results
+        }
+
         completed.add(nodeId)
       }
 
@@ -179,6 +223,10 @@ async function executeNode(node, input, tenantId, db, context = {}) {
     return executeSendEmailNode(node, input, tenantId, db, context, startedAt)
   }
 
+  if (node.type === 'human_approval') {
+    return executeHumanApprovalNode(node, input, tenantId, db, context, startedAt)
+  }
+
   const agent = db
     .prepare('SELECT * FROM agents WHERE id = ? AND tenant_id = ?')
     .get(node.agentId, tenantId)
@@ -212,7 +260,7 @@ async function executeNode(node, input, tenantId, db, context = {}) {
     const composed = compose(agent.system_prompt || '', files, sanitiserResult.sanitised)
     const { content, tokensUsed } = await relay(composed, agent.api_key_id, tenantId)
     const scopeResult = enforceScope(content, agent.purpose)
-    score(sanitiserResult, guardResult, scopeResult)
+    const riskScore = score(sanitiserResult, guardResult, scopeResult)
 
     return {
       nodeId: node.id,
@@ -221,6 +269,7 @@ async function executeNode(node, input, tenantId, db, context = {}) {
       tokensUsed: tokensUsed?.total || 0,
       durationMs: Date.now() - startedAt,
       status: 'success',
+      riskScore,
     }
   } catch (err) {
     return {
@@ -232,6 +281,164 @@ async function executeNode(node, input, tenantId, db, context = {}) {
       status: 'failed',
     }
   }
+}
+
+async function executeHumanApprovalNode(node, input, tenantId, db, context, startedAt) {
+  const config = node.config || {}
+  const threshold = Math.min(100, Math.max(0, Number(config.risk_threshold ?? 70)))
+  const sanitiserResult = sanitise(input)
+  const guardResult = guard(sanitiserResult, config.approval_message || 'workflow action')
+  const evaluatedRisk = score(sanitiserResult, guardResult, { compliant: true })
+  const riskScore = Math.max(Number(context.currentRiskScore) || 0, evaluatedRisk)
+  const agentId = resolveApprovalAgentId(node, context)
+
+  if (!agentId) {
+    return {
+      nodeId: node.id,
+      agentId: null,
+      output: 'No agent is associated with this approval gate',
+      tokensUsed: 0,
+      durationMs: Date.now() - startedAt,
+      status: 'failed',
+      error: 'missing_agent',
+      riskScore,
+    }
+  }
+
+  if (context.resumeGateId) {
+    const gate = db.prepare(`
+      SELECT * FROM approval_gates
+      WHERE id = ? AND tenant_id = ? AND workflow_id = ? AND node_id = ?
+    `).get(context.resumeGateId, tenantId, context.workflowId, node.id)
+    if (!gate || gate.status !== 'approved') {
+      return {
+        nodeId: node.id,
+        agentId,
+        gateId: context.resumeGateId,
+        output: '',
+        tokensUsed: 0,
+        durationMs: Date.now() - startedAt,
+        status: 'pending_approval',
+        riskScore,
+      }
+    }
+
+    return {
+      nodeId: node.id,
+      agentId,
+      gateId: gate.id,
+      output: gate.agent_prompt,
+      tokensUsed: 0,
+      durationMs: Date.now() - startedAt,
+      status: 'success',
+      riskScore: gate.risk_score,
+      humanApproved: true,
+    }
+  }
+
+  const safeInput = sanitiserResult.sanitisedText ?? sanitiserResult.sanitised ?? ''
+  const riskReason = guardResult.violation
+    || sanitiserResult.patterns?.join(', ')
+    || `Risk score ${riskScore} met threshold ${threshold}`
+
+  if (riskScore < threshold) {
+    const gateId = nanoid()
+    db.prepare(`
+      INSERT INTO approval_gates (
+        id, tenant_id, agent_id, run_id, workflow_id, node_id, status,
+        risk_score, risk_reason, agent_prompt, agent_response_draft,
+        required_approvers, current_approvals, timeout_minutes,
+        on_timeout, expires_at, resolved_at
+      )
+      VALUES (?, ?, ?, ?, ?, ?, 'auto_approved', ?, ?, ?, '', 0, 0, ?, ?, ?, ?)
+    `).run(
+      gateId,
+      tenantId,
+      agentId,
+      context.runId,
+      context.workflowId,
+      node.id,
+      riskScore,
+      riskReason,
+      safeInput,
+      Number(config.timeout_minutes) || 60,
+      config.on_timeout === 'escalate_owner' ? 'escalate_owner' : 'reject',
+      new Date().toISOString(),
+      new Date().toISOString()
+    )
+    log({
+      tenantId,
+      userId: context.initiatedByUserId,
+      initiatedByUserId: context.initiatedByUserId,
+      agentChain: [agentId],
+      action: 'approval_auto_approved',
+      riskScore,
+      prompt: safeInput,
+      metadata: { gateId, workflowId: context.workflowId, nodeId: node.id, threshold },
+    }, db)
+    return {
+      nodeId: node.id,
+      agentId,
+      gateId,
+      output: safeInput,
+      tokensUsed: 0,
+      durationMs: Date.now() - startedAt,
+      status: 'auto_approved',
+      riskScore,
+    }
+  }
+
+  const approverUserIds = configuredApprovers(db, tenantId, agentId, config.approver_user_ids)
+  const gate = createApprovalGate(db, {
+    tenantId,
+    agentId,
+    runId: context.runId,
+    workflowId: context.workflowId,
+    nodeId: node.id,
+    riskScore,
+    riskReason,
+    agentPrompt: safeInput,
+    agentResponseDraft: context.upstreamAgentId ? safeInput : (config.agent_response_draft || ''),
+    requiredApprovers: config.required_approvers,
+    approverUserIds,
+    timeoutMinutes: config.timeout_minutes,
+    onTimeout: config.on_timeout,
+    approvalMessage: config.approval_message,
+  })
+
+  return {
+    nodeId: node.id,
+    agentId,
+    gateId: gate.id,
+    output: '',
+    tokensUsed: 0,
+    durationMs: Date.now() - startedAt,
+    status: 'pending_approval',
+    riskScore,
+  }
+}
+
+function resolveApprovalAgentId(node, context) {
+  if (node.config?.agent_id) return node.config.agent_id
+  if (context.upstreamAgentId) return context.upstreamAgentId
+  const outgoing = context.graph?.outgoing.get(node.id) || []
+  for (const edge of outgoing) {
+    const target = context.graph.nodeById.get(edge.target)
+    if (target?.type === 'agent' || target?.agentId) return target.agentId
+  }
+  return null
+}
+
+function configuredApprovers(db, tenantId, agentId, configured) {
+  if (Array.isArray(configured) && configured.length) return configured
+  const owner = db.prepare(
+    'SELECT owner_id FROM agents WHERE id = ? AND tenant_id = ? AND owner_type = ?'
+  ).get(agentId, tenantId, 'human')
+  return db.prepare(`
+    SELECT id FROM users
+    WHERE tenant_id = ? AND role IN ('owner', 'admin') AND id != ?
+    ORDER BY CASE role WHEN 'owner' THEN 0 ELSE 1 END
+  `).all(tenantId, owner?.owner_id || '').map(row => row.id)
 }
 
 async function executeFetchUrlNode(node, input, tenantId, db, context, startedAt) {

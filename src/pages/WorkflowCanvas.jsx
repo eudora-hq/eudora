@@ -16,6 +16,7 @@ import '@xyflow/react/dist/style.css';
 import api from '../api/client';
 import { TierGate } from '../components/TierGate';
 import { WORKFLOW_TEMPLATES } from '../constants/agentTemplates';
+import HumanApprovalNode from '../components/WorkflowCanvas/nodes/HumanApprovalNode';
 
 const EDGE_STYLE = { stroke: '#10b981', strokeWidth: 2 };
 const NODE_DEFINITIONS = {
@@ -95,6 +96,44 @@ const NODE_DEFINITIONS = {
           { value: 'true', label: 'Raw HTML' },
         ],
         default: 'false',
+      },
+    },
+  },
+  human_approval: {
+    label: 'Human Approval',
+    icon: 'shield_person',
+    description: 'Pause high-risk actions until designated human approvers decide',
+    color: 'border-amber-500/40 bg-amber-500/5',
+    config: {
+      risk_threshold: { type: 'range', label: 'Risk threshold', default: 70 },
+      required_approvers: { type: 'number', label: 'Required approvers', default: 1 },
+      approver_user_ids: { type: 'multiselect', label: 'Designated approvers', default: [] },
+      timeout_minutes: {
+        type: 'select',
+        label: 'Timeout',
+        options: [
+          { value: '15', label: '15 minutes' },
+          { value: '30', label: '30 minutes' },
+          { value: '60', label: '60 minutes' },
+          { value: '120', label: '120 minutes' },
+          { value: '240', label: '240 minutes' },
+        ],
+        default: '60',
+      },
+      on_timeout: {
+        type: 'select',
+        label: 'On timeout',
+        options: [
+          { value: 'reject', label: 'Reject' },
+          { value: 'escalate_owner', label: 'Escalate to owner' },
+        ],
+        default: 'reject',
+      },
+      approval_message: {
+        type: 'textarea',
+        label: 'Approval message',
+        placeholder: 'Review this agent action before it proceeds.',
+        default: 'Review this agent action before it proceeds.',
       },
     },
   },
@@ -246,6 +285,7 @@ const nodeTypes = {
   fetch_rss: FetchRssNode,
   webhook_out: WebhookOutNode,
   send_email: SendEmailNode,
+  human_approval: HumanApprovalNode,
 };
 
 export default function WorkflowCanvas() {
@@ -445,6 +485,7 @@ function WorkflowEditor({ workflowId }) {
   const [workflowName, setWorkflowName] = useState('');
   const [description, setDescription] = useState('');
   const [agents, setAgents] = useState([]);
+  const [teamMembers, setTeamMembers] = useState([]);
   const [runs, setRuns] = useState([]);
   const [selectedNodeId, setSelectedNodeId] = useState(null);
   const [expandedRunId, setExpandedRunId] = useState(null);
@@ -475,16 +516,18 @@ function WorkflowEditor({ workflowId }) {
     async function load() {
       setError('');
       try {
-        const [workflowRes, agentRes, runsRes] = await Promise.all([
+        const [workflowRes, agentRes, runsRes, teamRes] = await Promise.all([
           api.get(`/workflows/${workflowId}`),
           api.get('/agents'),
           api.get(`/workflows/${workflowId}/runs`, { params: { page: 1, limit: 5 } }),
+          api.get('/team').catch(() => ({ data: { members: [] } })),
         ]);
         if (!mounted) return;
         setWorkflow(workflowRes.data);
         setWorkflowName(workflowRes.data.name || '');
         setDescription(workflowRes.data.description || '');
         setAgents(agentRes.data || []);
+        setTeamMembers(teamRes.data?.members || []);
         setRuns(runsRes.data.runs || []);
         const lookup = new Map((agentRes.data || []).map(agent => [agent.id, agent]));
         setNodes((workflowRes.data.nodes || []).map(node => toFlowNode(node, lookup)));
@@ -758,6 +801,17 @@ function WorkflowEditor({ workflowId }) {
                 </div>
                 <p className="font-mono text-[9px] text-text-muted leading-relaxed">Sends workflow output through Resend.</p>
               </div>
+              <div
+                draggable
+                onDragStart={(event) => onUtilityDragStart(event, 'human_approval')}
+                className="border border-amber-500/40 bg-amber-500/5 p-3 cursor-grab active:cursor-grabbing hover:border-amber-400 transition-colors"
+              >
+                <div className="flex items-center gap-2 mb-2">
+                  <span className="material-symbols-outlined text-amber-400 text-[16px]">shield_person</span>
+                  <div className="font-mono text-[11px] text-white uppercase font-bold tracking-widest leading-tight">Human Approval</div>
+                </div>
+                <p className="font-mono text-[9px] text-text-muted leading-relaxed">Pauses high-risk actions for explicit review.</p>
+              </div>
             </div>
           </aside>
 
@@ -934,6 +988,82 @@ function WorkflowEditor({ workflowId }) {
                   </div>
                 )}
 
+                {selectedNode.type === 'human_approval' && (
+                  <div className="space-y-4">
+                    <div className="space-y-2">
+                      <div className="flex items-center justify-between">
+                        <label className="font-mono text-[9px] text-text-muted uppercase tracking-widest">Risk threshold</label>
+                        <span className="font-mono text-[10px] text-amber-400">{selectedNode.data.config?.risk_threshold ?? 70}/100</span>
+                      </div>
+                      <input
+                        type="range"
+                        min="0"
+                        max="100"
+                        step="5"
+                        value={selectedNode.data.config?.risk_threshold ?? 70}
+                        onChange={(event) => updateNodeConfig('risk_threshold', Number(event.target.value))}
+                        className="w-full accent-amber-400"
+                      />
+                    </div>
+                    <div className="space-y-2">
+                      <label className="font-mono text-[9px] text-text-muted uppercase tracking-widest block">Required approvers</label>
+                      <input
+                        type="number"
+                        min="1"
+                        max="5"
+                        value={selectedNode.data.config?.required_approvers ?? 1}
+                        onChange={(event) => updateNodeConfig('required_approvers', Math.min(5, Math.max(1, Number(event.target.value))))}
+                        className="w-full bg-[#050505] border border-[#262626] text-white font-mono text-[11px] px-3 py-2 focus:outline-none focus:border-amber-400"
+                      />
+                    </div>
+                    <div className="space-y-2">
+                      <label className="font-mono text-[9px] text-text-muted uppercase tracking-widest block">Designated approvers</label>
+                      <div className="border border-[#262626] bg-[#050505] divide-y divide-[#1a1a1a] max-h-44 overflow-y-auto">
+                        {teamMembers.length === 0 ? (
+                          <p className="p-3 font-mono text-[9px] text-text-muted">No team members available</p>
+                        ) : teamMembers.map(member => {
+                          const selected = (selectedNode.data.config?.approver_user_ids || []).includes(member.id);
+                          return (
+                            <label key={member.id} className="flex items-center gap-3 p-3 cursor-pointer hover:bg-white/[0.03]">
+                              <input
+                                type="checkbox"
+                                checked={selected}
+                                onChange={() => {
+                                  const current = selectedNode.data.config?.approver_user_ids || [];
+                                  updateNodeConfig(
+                                    'approver_user_ids',
+                                    selected ? current.filter(id => id !== member.id) : [...current, member.id]
+                                  );
+                                }}
+                                className="accent-amber-400"
+                              />
+                              <span className="min-w-0">
+                                <span className="font-mono text-[10px] text-white block truncate">{member.name || member.email}</span>
+                                <span className="font-mono text-[8px] text-text-muted uppercase">{member.role}</span>
+                              </span>
+                            </label>
+                          );
+                        })}
+                      </div>
+                    </div>
+                    <ConfigInput
+                      field={NODE_DEFINITIONS.human_approval.config.timeout_minutes}
+                      value={String(selectedNode.data.config?.timeout_minutes || '60')}
+                      onChange={(value) => updateNodeConfig('timeout_minutes', Number(value))}
+                    />
+                    <ConfigInput
+                      field={NODE_DEFINITIONS.human_approval.config.on_timeout}
+                      value={selectedNode.data.config?.on_timeout || 'reject'}
+                      onChange={(value) => updateNodeConfig('on_timeout', value)}
+                    />
+                    <ConfigInput
+                      field={NODE_DEFINITIONS.human_approval.config.approval_message}
+                      value={selectedNode.data.config?.approval_message || ''}
+                      onChange={(value) => updateNodeConfig('approval_message', value)}
+                    />
+                  </div>
+                )}
+
                 <div className="space-y-3">
                   <label className="font-mono text-[9px] text-text-muted uppercase tracking-widest block">EDGE CONDITIONS</label>
                   {outgoingEdges.length === 0 ? (
@@ -1079,7 +1209,7 @@ function ConfigInput({ field, value, onChange }) {
 }
 
 function toFlowNode(node, agentById) {
-  if (node.type === 'fetch_url' || node.type === 'fetch_api' || node.type === 'fetch_rss' || node.type === 'webhook_out' || node.type === 'send_email') {
+  if (node.type === 'fetch_url' || node.type === 'fetch_api' || node.type === 'fetch_rss' || node.type === 'webhook_out' || node.type === 'send_email' || node.type === 'human_approval') {
     const definition = NODE_DEFINITIONS[node.type];
     return {
       id: node.id,
@@ -1106,7 +1236,7 @@ function toFlowNode(node, agentById) {
 }
 
 function fromFlowNode(node) {
-  if (node.type === 'fetch_url' || node.type === 'fetch_api' || node.type === 'fetch_rss' || node.type === 'webhook_out' || node.type === 'send_email') {
+  if (node.type === 'fetch_url' || node.type === 'fetch_api' || node.type === 'fetch_rss' || node.type === 'webhook_out' || node.type === 'send_email' || node.type === 'human_approval') {
     const definition = NODE_DEFINITIONS[node.type];
     return {
       id: node.id,

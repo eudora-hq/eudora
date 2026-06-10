@@ -26,6 +26,7 @@ import SystemHealth from './pages/SystemHealth'
 import Integrations from './pages/Integrations'
 import OAuthCallback from './pages/OAuthCallback'
 import Analytics from './pages/Analytics'
+import Approvals from './pages/Approvals'
 
 function ProtectedRoute({ children }) {
   const { isAuthenticated, user } = useAuthStore()
@@ -123,6 +124,8 @@ export default function App() {
           <Route path="system-health" element={<SystemHealth />} />
           <Route path="integrations" element={<Integrations />} />
           <Route path="analytics" element={<Analytics />} />
+          <Route path="approvals" element={<Approvals />} />
+          <Route path="approvals/:id" element={<Approvals />} />
         </Route>
         <Route path="*" element={<Navigate to="/login" replace />} />
       </Routes>

@@ -271,3 +271,70 @@ export async function sendInviteEmail({ to, inviterName, inviteUrl, role, tenant
     return { success: false, reason: err.message }
   }
 }
+
+export async function sendApprovalRequiredEmail({
+  to,
+  name,
+  agentName,
+  riskScore,
+  riskReason,
+  approvalUrl,
+  expiresAt,
+  reminder = false,
+}) {
+  const client = getResend()
+  if (!client) {
+    console.log(`[email] Approval URL for ${to}: ${approvalUrl}`)
+    return { success: false, reason: 'no_api_key' }
+  }
+
+  const safeName = escapeHtml(name || 'Approver')
+  const safeAgentName = escapeHtml(agentName || 'AI agent')
+  const safeRiskReason = escapeHtml(riskReason || 'Risk threshold exceeded')
+  const safeApprovalUrl = escapeHtml(approvalUrl)
+  const safeExpiry = escapeHtml(new Date(expiresAt).toLocaleString('en-GB', { timeZone: 'UTC' }))
+
+  try {
+    const { data, error } = await client.emails.send({
+      from: `Eudora Security <${getFromAddress()}>`,
+      to: [to],
+      subject: `${reminder ? 'Reminder: ' : ''}Action required: AI agent awaiting your approval`,
+      html: `
+<!DOCTYPE html>
+<html>
+<body style="margin:0;padding:0;background:#050505;font-family:monospace,sans-serif;">
+  <table width="100%" cellpadding="0" cellspacing="0" style="background:#050505;padding:40px 20px;">
+    <tr><td align="center">
+      <table width="560" cellpadding="0" cellspacing="0" style="background:#0a0a0a;border:1px solid #262626;max-width:560px;width:100%;">
+        <tr><td style="padding:24px 40px;border-bottom:1px solid #1a1a1a;">
+          <p style="margin:0;color:#f59e0b;font-size:11px;letter-spacing:.15em;text-transform:uppercase;">EUDORA APPROVAL GATE</p>
+        </td></tr>
+        <tr><td style="padding:32px 40px;">
+          <h1 style="margin:0 0 16px;color:#fff;font-size:18px;text-transform:uppercase;">Human approval required</h1>
+          <p style="margin:0 0 20px;color:#888;font-size:12px;line-height:1.7;">
+            Hi ${safeName},<br><br>
+            <strong style="color:#fff;">${safeAgentName}</strong> is waiting for approval before continuing.
+          </p>
+          <p style="margin:0 0 8px;color:#f59e0b;font-size:12px;">Risk score: ${Math.round(Number(riskScore) || 0)}/100</p>
+          <p style="margin:0 0 24px;color:#888;font-size:11px;line-height:1.6;">${safeRiskReason}</p>
+          <table cellpadding="0" cellspacing="0"><tr><td style="background:#f59e0b;">
+            <a href="${safeApprovalUrl}" style="display:inline-block;padding:14px 28px;color:#050505;text-decoration:none;font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.12em;">
+              Review action &rarr;
+            </a>
+          </td></tr></table>
+          <p style="margin:20px 0 0;color:#555;font-size:10px;">Approval window closes ${safeExpiry} UTC.</p>
+        </td></tr>
+      </table>
+    </td></tr>
+  </table>
+</body>
+</html>`,
+      text: `Action required: ${agentName} is awaiting approval.\n\nRisk score: ${riskScore}/100\nReason: ${riskReason}\nReview: ${approvalUrl}\nExpires: ${expiresAt}`,
+    })
+
+    if (error) return { success: false, reason: error.message }
+    return { success: true, id: data?.id }
+  } catch (err) {
+    return { success: false, reason: err.message }
+  }
+}

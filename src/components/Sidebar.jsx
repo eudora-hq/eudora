@@ -25,6 +25,7 @@ export default function Sidebar() {
     { id: 'templates', icon: 'grid_view', label: 'TEMPLATES', path: '/templates' },
     { id: 'chat', icon: 'chat', label: 'NEURAL INTERFACE', path: '/chat' },
     { id: 'workflows', icon: 'account_tree', label: 'WORKFLOWS', path: '/workflows' },
+    { id: 'approvals', icon: 'shield_person', label: 'APPROVALS', path: '/approvals' },
     { id: 'audit', icon: 'receipt_long', label: 'NEXUS AUDIT', path: '/audit' },
     { id: 'cron', icon: 'calendar_today', label: 'SCHEDULED JOBS', path: '/cron' },
     { id: 'integrations', icon: 'hub', label: 'INTEGRATIONS', path: '/integrations' },
