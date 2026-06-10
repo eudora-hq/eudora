@@ -59,7 +59,13 @@ export function createApprovalGate(db, {
   approvalMessage = 'Review this agent action before it proceeds.',
 }) {
   const approvers = validApprovers(db, tenantId, approverUserIds)
-  if (!approvers.length) throw new Error('no_valid_approvers')
+  if (!approvers.length) {
+    const owner = db.prepare(
+      "SELECT id, email, name FROM users WHERE tenant_id = ? AND role = 'owner' LIMIT 1"
+    ).get(tenantId)
+    if (!owner) throw new Error('no_valid_approvers')
+    approvers.push(owner)
+  }
 
   const gateId = nanoid()
   const timeout = clamp(timeoutMinutes, 1, 1440, 60)

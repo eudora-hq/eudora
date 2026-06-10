@@ -197,6 +197,15 @@ describe('approval gates', () => {
     expect(response.json().error).toBe('conflict_of_interest')
   })
 
+  it('falls back to the tenant owner when no valid approvers are configured', () => {
+    const gate = createGate({ approverUserIds: ['missing-user'] })
+    const approvers = db.prepare(
+      'SELECT user_id FROM approval_gate_approvers WHERE gate_id = ?'
+    ).all(gate.id)
+
+    expect(approvers).toEqual([{ user_id: ownerId }])
+  })
+
   it('prevents a non-designated user from deciding', async () => {
     const gate = createGate()
     currentUser = { userId: secondApproverId, tenantId, role: 'admin' }

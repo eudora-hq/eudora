@@ -491,11 +491,14 @@ function WorkflowEditor({ workflowId }) {
   const [expandedRunId, setExpandedRunId] = useState(null);
   const [historyOpen, setHistoryOpen] = useState(true);
   const [saving, setSaving] = useState(false);
+  const [isDirty, setIsDirty] = useState(false);
+  const [savedRecently, setSavedRecently] = useState(false);
   const [running, setRunning] = useState(false);
   const [error, setError] = useState('');
   const [showTooltip, setShowTooltip] = useState(false);
-  const [nodes, setNodes, onNodesChange] = useNodesState([]);
-  const [edges, setEdges, onEdgesChange] = useEdgesState([]);
+  const savedStateTimerRef = useRef(null);
+  const [nodes, setNodes, applyNodeChanges] = useNodesState([]);
+  const [edges, setEdges, applyEdgeChanges] = useEdgesState([]);
 
   const agentById = useMemo(() => new Map(agents.map(agent => [agent.id, agent])), [agents]);
   const selectedNode = nodes.find(node => node.id === selectedNodeId);
@@ -509,6 +512,16 @@ function WorkflowEditor({ workflowId }) {
     } catch {
       setShowTooltip(false);
     }
+  }, []);
+
+  useEffect(() => () => {
+    if (savedStateTimerRef.current) clearTimeout(savedStateTimerRef.current);
+  }, []);
+
+  const markDirty = useCallback(() => {
+    if (savedStateTimerRef.current) clearTimeout(savedStateTimerRef.current);
+    setSavedRecently(false);
+    setIsDirty(true);
   }, []);
 
   useEffect(() => {
@@ -532,6 +545,8 @@ function WorkflowEditor({ workflowId }) {
         const lookup = new Map((agentRes.data || []).map(agent => [agent.id, agent]));
         setNodes((workflowRes.data.nodes || []).map(node => toFlowNode(node, lookup)));
         setEdges((workflowRes.data.edges || []).map(toFlowEdge));
+        setIsDirty(false);
+        setSavedRecently(false);
       } catch (err) {
         if (mounted) setError(err.response?.data?.error || 'Unable to load workflow');
       }
@@ -539,6 +554,16 @@ function WorkflowEditor({ workflowId }) {
     load();
     return () => { mounted = false; };
   }, [workflowId, setNodes, setEdges]);
+
+  const onNodesChange = useCallback((changes) => {
+    applyNodeChanges(changes);
+    if (changes.some(change => !['select', 'dimensions'].includes(change.type))) markDirty();
+  }, [applyNodeChanges, markDirty]);
+
+  const onEdgesChange = useCallback((changes) => {
+    applyEdgeChanges(changes);
+    if (changes.some(change => change.type !== 'select')) markDirty();
+  }, [applyEdgeChanges, markDirty]);
 
   const onConnect = useCallback((connection) => {
     setEdges((eds) => addEdge({
@@ -548,7 +573,8 @@ function WorkflowEditor({ workflowId }) {
       animated: false,
       data: { condition: '' },
     }, eds));
-  }, [setEdges]);
+    markDirty();
+  }, [markDirty, setEdges]);
 
   const onDragStart = (event, agent) => {
     event.dataTransfer.setData('application/eudora-agent', JSON.stringify(agent));
@@ -575,6 +601,7 @@ function WorkflowEditor({ workflowId }) {
         position,
         data: { agentId: agent.id, agent, label: agent.name },
       }));
+      markDirty();
       return;
     }
 
@@ -582,7 +609,7 @@ function WorkflowEditor({ workflowId }) {
       const definition = NODE_DEFINITIONS[utilityType];
       const id = `node-${utilityType}-${Date.now()}`;
       const config = Object.fromEntries(
-        Object.entries(definition.config || {}).map(([key, field]) => [key, field.default || ''])
+        Object.entries(definition.config || {}).map(([key, field]) => [key, field.default ?? ''])
       );
       setNodes((nds) => nds.concat({
         id,
@@ -593,8 +620,9 @@ function WorkflowEditor({ workflowId }) {
           config,
         },
       }));
+      markDirty();
     }
-  }, [screenToFlowPosition, setNodes]);
+  }, [markDirty, screenToFlowPosition, setNodes]);
 
   const onDragOver = useCallback((event) => {
     event.preventDefault();
@@ -602,6 +630,7 @@ function WorkflowEditor({ workflowId }) {
   }, []);
 
   const saveWorkflow = async () => {
+    if (!isDirty) return true;
     setSaving(true);
     setError('');
     try {
@@ -613,6 +642,13 @@ function WorkflowEditor({ workflowId }) {
       };
       const res = await api.patch(`/workflows/${workflowId}`, payload);
       setWorkflow(res.data);
+      setIsDirty(false);
+      setSavedRecently(true);
+      if (savedStateTimerRef.current) clearTimeout(savedStateTimerRef.current);
+      savedStateTimerRef.current = setTimeout(() => {
+        setSavedRecently(false);
+        savedStateTimerRef.current = null;
+      }, 2000);
       return true;
     } catch (err) {
       setError(err.response?.data?.error || 'Unable to save workflow');
@@ -663,6 +699,7 @@ function WorkflowEditor({ workflowId }) {
 
   const updateEdgeCondition = (edgeId, condition) => {
     setEdges((eds) => eds.map(edge => edge.id === edgeId ? { ...edge, condition, data: { ...(edge.data || {}), condition } } : edge));
+    markDirty();
   };
 
   const updateNodeConfig = (key, value) => {
@@ -677,6 +714,7 @@ function WorkflowEditor({ workflowId }) {
         },
       },
     } : node));
+    markDirty();
   };
 
   const removeSelectedNode = () => {
@@ -684,6 +722,7 @@ function WorkflowEditor({ workflowId }) {
     setNodes((nds) => nds.filter(node => node.id !== selectedNodeId));
     setEdges((eds) => eds.filter(edge => edge.source !== selectedNodeId && edge.target !== selectedNodeId));
     setSelectedNodeId(null);
+    markDirty();
   };
 
   const dismissTooltip = () => {
@@ -703,14 +742,27 @@ function WorkflowEditor({ workflowId }) {
             <button onClick={() => navigate('/workflows')} className="font-mono text-[10px] text-text-muted hover:text-primary uppercase tracking-widest whitespace-nowrap">← Back to workflows</button>
             <input
               value={workflowName}
-              onChange={(e) => setWorkflowName(e.target.value)}
+              onChange={(e) => {
+                setWorkflowName(e.target.value);
+                markDirty();
+              }}
               className="bg-transparent font-mono text-[16px] text-white uppercase font-bold tracking-widest focus:outline-none border-b border-transparent focus:border-primary min-w-0 flex-1"
             />
           </div>
           <div className="flex items-center gap-3">
             {error && <span className="font-mono text-[10px] text-danger uppercase tracking-widest hidden lg:block">{error}</span>}
-            <button onClick={saveWorkflow} disabled={saving} className="border border-[#262626] bg-[#0a0a0a] text-white px-4 py-2 font-mono text-[10px] uppercase tracking-widest disabled:opacity-50">
-              {saving ? 'SAVING...' : 'SAVE'}
+            <button
+              onClick={saveWorkflow}
+              disabled={saving || !isDirty}
+              className={`border px-4 py-2 font-mono text-[10px] uppercase tracking-widest transition-colors disabled:cursor-default ${
+                savedRecently
+                  ? 'border-primary/40 bg-primary/5 text-primary'
+                  : isDirty
+                  ? 'border-primary bg-primary text-[#050505] font-bold'
+                  : 'border-[#262626] bg-[#0a0a0a] text-text-muted'
+              }`}
+            >
+              {saving ? 'SAVING...' : savedRecently ? 'SAVED ✓' : isDirty ? 'SAVE CHANGES' : 'SAVED'}
             </button>
             <button onClick={runWorkflow} disabled={running || nodes.length === 0} className="bg-primary text-[#050505] px-4 py-2 font-mono text-[10px] font-bold uppercase tracking-widest disabled:opacity-50">
               {running ? 'RUNNING...' : 'RUN NOW'}
@@ -1022,24 +1074,28 @@ function WorkflowEditor({ workflowId }) {
                         {teamMembers.length === 0 ? (
                           <p className="p-3 font-mono text-[9px] text-text-muted">No team members available</p>
                         ) : teamMembers.map(member => {
-                          const selected = (selectedNode.data.config?.approver_user_ids || []).includes(member.id);
+                          const configuredIds = Array.isArray(selectedNode.data.config?.approver_user_ids)
+                            ? selectedNode.data.config.approver_user_ids
+                            : [];
+                          const selected = configuredIds.includes(member.id);
                           return (
                             <label key={member.id} className="flex items-center gap-3 p-3 cursor-pointer hover:bg-white/[0.03]">
                               <input
                                 type="checkbox"
                                 checked={selected}
                                 onChange={() => {
-                                  const current = selectedNode.data.config?.approver_user_ids || [];
                                   updateNodeConfig(
                                     'approver_user_ids',
-                                    selected ? current.filter(id => id !== member.id) : [...current, member.id]
+                                    selected
+                                      ? configuredIds.filter(id => id !== member.id)
+                                      : [...configuredIds, member.id]
                                   );
                                 }}
                                 className="accent-amber-400"
                               />
                               <span className="min-w-0">
                                 <span className="font-mono text-[10px] text-white block truncate">{member.name || member.email}</span>
-                                <span className="font-mono text-[8px] text-text-muted uppercase">{member.role}</span>
+                                <span className="font-mono text-[8px] text-text-muted block truncate">{member.email}</span>
                               </span>
                             </label>
                           );
