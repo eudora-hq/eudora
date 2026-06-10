@@ -28,6 +28,7 @@ import teamRoutes from './routes/team.js'
 import notificationsRoutes from './routes/notifications.js'
 import integrationsRoutes from './routes/integrations.js'
 import analyticsRoutes from './routes/analytics.js'
+import ingestRoutes from './routes/ingest.js'
 import { loadAllJobs } from './scheduler/cronRunner.js'
 
 const PORT = process.env.PORT || 3001
@@ -91,6 +92,7 @@ async function start() {
     const key = `${request.method} ${path}`
     if (PUBLIC_ROUTES.has(key)) return
     if (process.env.ENABLE_ADMIN === 'true' && path.startsWith('/admin/')) return
+    if (path === '/v1/ingest') return
     if (request.method === 'GET' && path.startsWith('/auth/invite/')) return
     if (path.startsWith('/proxy/')) return
 
@@ -125,6 +127,7 @@ async function start() {
   fastify.register(notificationsRoutes, { prefix: '/notifications' })
   fastify.register(integrationsRoutes, { prefix: '/integrations' })
   fastify.register(analyticsRoutes, { prefix: '/analytics' })
+  fastify.register(ingestRoutes, { prefix: '/v1' })
   if (process.env.ENABLE_ADMIN === 'true') {
     const { default: adminRoutes } = await import('./routes/admin.js')
     await fastify.register(adminRoutes, { prefix: '/admin' })

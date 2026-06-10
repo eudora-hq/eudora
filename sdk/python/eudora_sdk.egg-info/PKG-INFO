@@ -6,3 +6,9 @@ License: MIT
 Keywords: eudora,ai,compliance,audit,dora
 Requires-Python: >=3.8
 Requires-Dist: httpx<1,>=0.24
+Provides-Extra: langchain
+Requires-Dist: langchain-core>=0.1.0; extra == "langchain"
+Requires-Dist: httpx>=0.24.0; extra == "langchain"
+Provides-Extra: crewai
+Requires-Dist: crewai>=0.1.0; extra == "crewai"
+Requires-Dist: httpx>=0.24.0; extra == "crewai"

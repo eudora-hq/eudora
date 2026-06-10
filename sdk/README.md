@@ -96,3 +96,42 @@ client = wrap_openai(
 ## Get your proxy key
 
 Register your agent at https://app.geteudora.com → Agent Fleet → Register External Agent.
+
+## LangChain callbacks
+
+```bash
+pip install "eudora-sdk[langchain]"
+```
+
+```python
+from eudora.extras.langchain import EudoraCallbackHandler
+
+handler = EudoraCallbackHandler(
+    proxy_key="eudora-proxy-xxx",
+    agent_id="my-agent",
+)
+result = chain.invoke(
+    {"input": "..."},
+    config={"callbacks": [handler]},
+)
+```
+
+## CrewAI callbacks
+
+```bash
+pip install "eudora-sdk[crewai]"
+```
+
+```python
+from crewai import Crew
+from eudora.extras.crewai import EudoraCrewCallback
+
+callback = EudoraCrewCallback(
+    proxy_key="eudora-proxy-xxx",
+    agent_id="my-crew",
+)
+crew = Crew(agents=[...], tasks=[...], callbacks=[callback])
+```
+
+The CrewAI adapter is also callable and can be passed as `task_callback=callback`
+in CrewAI versions that use the task callback API.

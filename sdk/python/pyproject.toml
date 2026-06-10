@@ -11,6 +11,10 @@ requires-python = ">=3.8"
 dependencies = ["httpx>=0.24,<1"]
 keywords = ["eudora", "ai", "compliance", "audit", "dora"]
 
+[project.optional-dependencies]
+langchain = ["langchain-core>=0.1.0", "httpx>=0.24.0"]
+crewai = ["crewai>=0.1.0", "httpx>=0.24.0"]
+
 [tool.setuptools.packages.find]
 where = ["."]
 include = ["eudora*"]
