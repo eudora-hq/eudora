@@ -1,0 +1,10 @@
+const Database = require('better-sqlite3');
+const db = new Database('eudora.db');
+const agent = db.prepare('SELECT id, name, status, proxy_key_prefix, proxy_key_hash FROM agents WHERE name = ?').get('test-langchain-agent');
+console.log('proxy_key_hash set:', !!agent.proxy_key_hash);
+console.log('hash value:', agent.proxy_key_hash);
+const crypto = require('crypto');
+const key = 'eudora-proxy-svrAUA5F62q1m0S2nGahfuedsniQQCMW';
+const hash = crypto.createHash('sha256').update(key).digest('hex');
+console.log('computed hash:', hash);
+console.log('hashes match:', hash === agent.proxy_key_hash);

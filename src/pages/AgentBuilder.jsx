@@ -301,6 +301,11 @@ export default function AgentBuilder() {
     await navigator.clipboard.writeText(proxyResult.proxyKey);
   };
 
+  const copyAgentId = async (agentId) => {
+    if (!agentId) return;
+    await navigator.clipboard.writeText(agentId);
+  };
+
   const handleTemplateSelect = (template) => {
     const firstKey = apiKeys[0];
     setPrefilledTemplate(template);
@@ -671,6 +676,21 @@ export default function AgentBuilder() {
               </div>
 
               <h3 className="font-mono text-[16px] xl:text-[18px] font-bold text-white uppercase tracking-tight mb-1">{agent.name}</h3>
+              {agent.agentType === 'external' && (
+                <div className="flex items-center gap-2 min-w-0 mb-2">
+                  <span className="font-mono text-[8px] text-primary uppercase tracking-widest flex-shrink-0">AGENT_ID</span>
+                  <code className="font-mono text-[9px] text-text-muted truncate">{agent.id}</code>
+                  <button
+                    type="button"
+                    onClick={() => copyAgentId(agent.id)}
+                    title="Copy agent ID"
+                    aria-label={`Copy agent ID ${agent.id}`}
+                    className="text-text-muted hover:text-primary transition-colors cursor-pointer flex-shrink-0"
+                  >
+                    <span className="material-symbols-outlined text-[14px]">content_copy</span>
+                  </button>
+                </div>
+              )}
               <div className="font-mono text-[9px] text-text-muted/60 mt-1 mb-2">
                 {agent.owner_type === 'human' ? (
                   <span>Owner: {agent.owner_email || 'You'}</span>
@@ -906,6 +926,14 @@ export default function AgentBuilder() {
                   </p>
                 </div>
                 <div className="space-y-2">
+                  <label className="font-mono text-[10px] text-primary uppercase tracking-[0.15em] block">AGENT_NAME</label>
+                  <input
+                    readOnly
+                    value={externalForm.name}
+                    className="w-full bg-[#050505] border border-[#262626] text-white px-4 py-3 font-mono text-[12px]"
+                  />
+                </div>
+                <div className="space-y-2">
                   <label className="font-mono text-[10px] text-primary uppercase tracking-[0.15em] block">PROXY_KEY</label>
                   <div className="flex gap-3">
                     <input
@@ -920,6 +948,26 @@ export default function AgentBuilder() {
                       COPY
                     </button>
                   </div>
+                </div>
+                <div className="space-y-2">
+                  <label className="font-mono text-[10px] text-primary uppercase tracking-[0.15em] block">AGENT_ID</label>
+                  <div className="flex gap-3">
+                    <input
+                      readOnly
+                      value={proxyResult.agentId}
+                      className="flex-1 min-w-0 bg-[#050505] border border-[#262626] text-white px-4 py-3 font-mono text-[12px]"
+                    />
+                    <button
+                      type="button"
+                      onClick={() => copyAgentId(proxyResult.agentId)}
+                      className="border border-primary/30 text-primary hover:border-primary px-4 py-3 font-mono text-[9px] uppercase tracking-widest transition-colors cursor-pointer"
+                    >
+                      COPY
+                    </button>
+                  </div>
+                  <p className="font-mono text-[9px] text-text-muted">
+                    Use this as the <code className="text-primary">agent_id</code> parameter in the Eudora SDK
+                  </p>
                 </div>
                 <div className="flex justify-end">
                   <button

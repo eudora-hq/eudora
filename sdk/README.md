@@ -107,14 +107,18 @@ pip install "eudora-sdk[langchain]"
 from eudora.extras.langchain import EudoraCallbackHandler
 
 handler = EudoraCallbackHandler(
-    proxy_key="eudora-proxy-xxx",
-    agent_id="my-agent",
+    proxy_key="eudora-proxy-...",    # shown once at registration
+    agent_id="WddJn8R9DRPyRAJ_...",  # find this in Agent Fleet or at registration
+    eudora_base_url="https://api.geteudora.com",
 )
 result = chain.invoke(
     {"input": "..."},
     config={"callbacks": [handler]},
 )
 ```
+
+The `agent_id` is your agent's unique identifier, visible in the Agent Fleet page
+and on the registration confirmation screen.
 
 ## CrewAI callbacks
 
