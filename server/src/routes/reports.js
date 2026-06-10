@@ -10,6 +10,10 @@ import {
   extractTimestampedContent,
   verifyTimestamp,
 } from '../services/rfc3161.js'
+import {
+  ARTICLE50_TEMPLATES,
+  getArticle50Template,
+} from '../services/article50Templates.js'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
 const REPORT_DIR = resolve(__dirname, '../../.compliance-reports')
@@ -89,6 +93,131 @@ export async function registerReportVerificationRoute(fastify) {
   })
 }
 
+function parseRegulationRefs(value, fallback) {
+  if (value == null) return fallback
+  if (!Array.isArray(value) || value.some(item => typeof item !== 'string')) return null
+  return value
+}
+
+export async function registerArticle50Routes(fastify) {
+  const db = fastify.db
+
+  fastify.get('/records', async (request, reply) => {
+    const {
+      agent_id: agentId,
+      dateFrom,
+      dateTo,
+      sector_template: sectorTemplate,
+    } = request.query || {}
+    const clauses = ['tenant_id = ?']
+    const params = [request.tenantId]
+
+    if (sectorTemplate && !ARTICLE50_TEMPLATES[sectorTemplate]) {
+      return reply.code(400).send({ error: 'invalid_sector_template' })
+    }
+    if (agentId) {
+      clauses.push('agent_id = ?')
+      params.push(agentId)
+    }
+    if (dateFrom) {
+      const parsedDateFrom = new Date(Number(dateFrom) || dateFrom)
+      if (Number.isNaN(parsedDateFrom.getTime())) {
+        return reply.code(400).send({ error: 'invalid_date_range' })
+      }
+      clauses.push('interaction_timestamp >= ?')
+      params.push(parsedDateFrom.toISOString())
+    }
+    if (dateTo) {
+      const parsedDateTo = new Date(Number(dateTo) || dateTo)
+      if (Number.isNaN(parsedDateTo.getTime())) {
+        return reply.code(400).send({ error: 'invalid_date_range' })
+      }
+      clauses.push('interaction_timestamp <= ?')
+      params.push(parsedDateTo.toISOString())
+    }
+    if (sectorTemplate) {
+      clauses.push('sector_template = ?')
+      params.push(sectorTemplate)
+    }
+
+    return db.prepare(`
+      SELECT * FROM article50_records
+      WHERE ${clauses.join(' AND ')}
+      ORDER BY interaction_timestamp DESC
+    `).all(...params).map(record => ({
+      ...record,
+      disclosure_made: Boolean(record.disclosure_made),
+      regulation_refs: JSON.parse(record.regulation_refs || '[]'),
+    }))
+  })
+
+  fastify.post('/records', async (request, reply) => {
+    const {
+      agent_id: agentId,
+      run_id: runId,
+      interaction_timestamp: interactionTimestamp,
+      disclosure_made: disclosureMade = true,
+      disclosure_method: disclosureMethod = 'logged_only',
+      output_summary: outputSummary,
+      sector_template: sectorTemplate = 'general',
+      regulation_refs: requestedRegulations,
+    } = request.body || {}
+
+    if (!agentId || !runId || !interactionTimestamp || !outputSummary) {
+      return reply.code(400).send({ error: 'missing_fields' })
+    }
+    const template = getArticle50Template(sectorTemplate)
+    if (!template) return reply.code(400).send({ error: 'invalid_sector_template' })
+    if (!['system_prompt', 'prepended_message', 'logged_only'].includes(disclosureMethod)) {
+      return reply.code(400).send({ error: 'invalid_disclosure_method' })
+    }
+    const timestamp = new Date(interactionTimestamp)
+    if (Number.isNaN(timestamp.getTime())) {
+      return reply.code(400).send({ error: 'invalid_interaction_timestamp' })
+    }
+    const agent = db.prepare('SELECT id FROM agents WHERE id = ? AND tenant_id = ?')
+      .get(agentId, request.tenantId)
+    if (!agent) return reply.code(404).send({ error: 'agent_not_found' })
+
+    const regulationRefs = parseRegulationRefs(requestedRegulations, template.regulations)
+    if (!regulationRefs) return reply.code(400).send({ error: 'invalid_regulation_refs' })
+
+    const id = nanoid()
+    db.prepare(`
+      INSERT INTO article50_records (
+        id, tenant_id, agent_id, run_id, interaction_timestamp,
+        disclosure_made, disclosure_method, output_summary,
+        sector_template, regulation_refs
+      )
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(
+      id,
+      request.tenantId,
+      agentId,
+      runId,
+      timestamp.toISOString(),
+      disclosureMade ? 1 : 0,
+      disclosureMethod,
+      String(outputSummary).substring(0, 200),
+      sectorTemplate,
+      JSON.stringify(regulationRefs)
+    )
+
+    return reply.code(201).send({
+      id,
+      tenant_id: request.tenantId,
+      agent_id: agentId,
+      run_id: runId,
+      interaction_timestamp: timestamp.toISOString(),
+      disclosure_made: Boolean(disclosureMade),
+      disclosure_method: disclosureMethod,
+      output_summary: String(outputSummary).substring(0, 200),
+      sector_template: sectorTemplate,
+      regulation_refs: regulationRefs,
+    })
+  })
+}
+
 export default async function reportsRoutes(fastify) {
   const db = fastify.db
 
@@ -107,10 +236,20 @@ export default async function reportsRoutes(fastify) {
       agentId = null,
       format = 'pdf',
       traceMode,
+      mode,
+      sectorTemplate = 'general',
     } = request.body || {}
-    const resolvedTraceMode = ['flagged', 'full', 'summary'].includes(traceMode)
-      ? traceMode
+    const requestedMode = mode || traceMode || 'flagged'
+    if (!['flagged', 'full', 'summary', 'article50'].includes(requestedMode)) {
+      return reply.code(400).send({ error: 'invalid_report_mode' })
+    }
+    if (requestedMode === 'article50' && !ARTICLE50_TEMPLATES[sectorTemplate]) {
+      return reply.code(400).send({ error: 'invalid_sector_template' })
+    }
+    const resolvedTraceMode = ['flagged', 'full', 'summary'].includes(requestedMode)
+      ? requestedMode
       : 'flagged'
+    const resolvedReportMode = requestedMode
     if (format !== 'pdf') {
       return reply.code(400).send({ error: 'unsupported_format' })
     }
@@ -136,6 +275,7 @@ export default async function reportsRoutes(fastify) {
       timestampStatus,
       timestampTime,
       tsaUrl,
+      data,
     } = await generateComplianceReport(db, {
       tenantId: request.tenantId,
       dateFrom: Number(dateFrom),
@@ -144,28 +284,58 @@ export default async function reportsRoutes(fastify) {
       reportId,
       generatedAt,
       traceMode: resolvedTraceMode,
+      reportMode: resolvedReportMode,
+      sectorTemplate,
     })
 
-    db.prepare(`
-      INSERT INTO compliance_reports
-        (
-          id, tenant_id, date_from, date_to, report_hash, generated_at, agent_id,
-          timestamp_token, timestamp_status, timestamp_time, tsa_url
-        )
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-    `).run(
-      reportId,
-      request.tenantId,
-      Number(dateFrom),
-      Number(dateTo),
-      reportHash,
-      generatedAt,
-      agentId,
-      timestampToken,
-      timestampStatus,
-      timestampTime,
-      tsaUrl
-    )
+    db.transaction(() => {
+      db.prepare(`
+        INSERT INTO compliance_reports
+          (
+            id, tenant_id, date_from, date_to, report_hash, generated_at, agent_id,
+            timestamp_token, timestamp_status, timestamp_time, tsa_url, report_mode
+          )
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `).run(
+        reportId,
+        request.tenantId,
+        Number(dateFrom),
+        Number(dateTo),
+        reportHash,
+        generatedAt,
+        agentId,
+        timestampToken,
+        timestampStatus,
+        timestampTime,
+        tsaUrl,
+        resolvedReportMode
+      )
+
+      if (resolvedReportMode === 'article50') {
+        const insertRecord = db.prepare(`
+          INSERT INTO article50_records (
+            id, tenant_id, agent_id, run_id, interaction_timestamp,
+            disclosure_made, disclosure_method, output_summary,
+            sector_template, regulation_refs
+          )
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        `)
+        data.article50Records.forEach(record => {
+          insertRecord.run(
+            nanoid(),
+            request.tenantId,
+            record.agentId,
+            record.runId,
+            record.interactionTimestamp,
+            record.disclosureMade,
+            record.disclosureMethod,
+            record.outputSummary,
+            record.sectorTemplate,
+            JSON.stringify(record.regulationRefs)
+          )
+        })
+      }
+    })()
 
     writeFileSync(reportPath(reportId), pdfBuffer)
     reply.header('X-Report-Id', reportId)
@@ -177,7 +347,7 @@ export default async function reportsRoutes(fastify) {
     return db.prepare(`
       SELECT
         id, date_from, date_to, report_hash, generated_at, agent_id,
-        timestamp_status, timestamp_time, tsa_url
+        timestamp_status, timestamp_time, tsa_url, report_mode
       FROM compliance_reports
       WHERE tenant_id = ?
       ORDER BY generated_at DESC

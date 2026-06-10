@@ -17,6 +17,12 @@ const ACTIONS = [
 ];
 
 const LIMIT = 50;
+const ARTICLE50_SECTORS = {
+  general: 'General EU AI Act Article 50 transparency records for human-facing AI systems.',
+  healthcare: 'High-risk clinical support records with clinician accountability and long-term retention.',
+  financial: 'Financial AI records aligned with Article 50, DORA operational resilience, and MiFID II.',
+  hr_legal: 'High-risk employment and legal workflow records with documented human oversight.',
+};
 
 export default function AuditLog() {
   const [events, setEvents] = useState([]);
@@ -35,6 +41,8 @@ export default function AuditLog() {
     dateFrom: formatDateInput(Date.now() - 30 * 24 * 60 * 60 * 1000),
     dateTo: formatDateInput(Date.now()),
     agentId: '',
+    mode: 'flagged',
+    sectorTemplate: 'general',
   });
   const [reportError, setReportError] = useState('');
   const [reportLoading, setReportLoading] = useState(false);
@@ -130,6 +138,10 @@ export default function AuditLog() {
         dateFrom,
         dateTo,
         ...(reportForm.agentId ? { agentId: reportForm.agentId } : {}),
+        mode: reportForm.mode,
+        ...(reportForm.mode === 'article50'
+          ? { sectorTemplate: reportForm.sectorTemplate }
+          : {}),
         format: 'pdf',
       }, { responseType: 'blob' });
       downloadBlob(res.data, 'eudora-compliance-report.pdf');
@@ -246,6 +258,49 @@ export default function AuditLog() {
               </select>
             </div>
           </div>
+
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+            <div className="space-y-2">
+              <label className="font-mono text-[10px] text-primary uppercase tracking-[0.15em] block">REPORT MODE</label>
+              <select
+                value={reportForm.mode}
+                onChange={(e) => setReportForm(form => ({ ...form, mode: e.target.value }))}
+                className="w-full bg-[#050505] border border-[#262626] text-white px-4 py-3 font-mono text-[11px] focus:border-primary uppercase appearance-none cursor-pointer"
+              >
+                <option value="flagged">FLAGGED</option>
+                <option value="full">FULL</option>
+                <option value="summary">SUMMARY</option>
+                <option value="article50">EU AI ACT ARTICLE 50</option>
+              </select>
+            </div>
+            {reportForm.mode === 'article50' && (
+              <div className="space-y-2">
+                <label className="font-mono text-[10px] text-primary uppercase tracking-[0.15em] block">SECTOR TEMPLATE</label>
+                <select
+                  value={reportForm.sectorTemplate}
+                  onChange={(e) => setReportForm(form => ({ ...form, sectorTemplate: e.target.value }))}
+                  className="w-full bg-[#050505] border border-[#262626] text-white px-4 py-3 font-mono text-[11px] focus:border-primary uppercase appearance-none cursor-pointer"
+                >
+                  <option value="general">GENERAL</option>
+                  <option value="healthcare">HEALTHCARE</option>
+                  <option value="financial">FINANCIAL SERVICES</option>
+                  <option value="hr_legal">HR / LEGAL</option>
+                </select>
+                <p className="font-mono text-[9px] text-text-muted leading-relaxed">
+                  {ARTICLE50_SECTORS[reportForm.sectorTemplate]}
+                </p>
+              </div>
+            )}
+          </div>
+
+          {reportForm.mode === 'article50' && (
+            <div className="border border-amber-400/30 bg-amber-400/5 px-4 py-3 flex items-start gap-3">
+              <span className="material-symbols-outlined text-amber-400 text-[17px]">info</span>
+              <p className="font-mono text-[10px] text-amber-400 uppercase tracking-widest leading-relaxed">
+                EU AI Act Article 50 transparency obligations apply from August 2, 2026
+              </p>
+            </div>
+          )}
 
           {reportError && (
             <div className="border border-danger/30 bg-danger/10 text-danger font-mono text-[12px] uppercase tracking-widest p-3">

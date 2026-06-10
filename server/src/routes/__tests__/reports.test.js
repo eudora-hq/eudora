@@ -31,7 +31,10 @@ import {
   requestTimestamp,
   verifyTimestamp,
 } from '../../services/rfc3161.js'
-import reportsRoutes, { registerReportVerificationRoute } from '../reports.js'
+import reportsRoutes, {
+  registerArticle50Routes,
+  registerReportVerificationRoute,
+} from '../reports.js'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
 const migrations = [
@@ -41,6 +44,7 @@ const migrations = [
   '004_pbac.sql',
   '005_reports.sql',
   '010_rfc3161_timestamps.sql',
+  '011_article50_templates.sql',
 ]
   .map((file) => readFileSync(resolve(__dirname, '../../db/migrations', file), 'utf8'))
 const reportDir = resolve(__dirname, '../../../.compliance-reports')
@@ -82,7 +86,23 @@ beforeEach(async () => {
     INSERT INTO audit_log
       (id, tenant_id, user_id, action, risk_score, metadata, initiated_by_user_id, agent_chain, ts)
     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-  `).run(nanoid(), tenantId, userId, 'chat_message', 10, JSON.stringify({ agentId }), userId, JSON.stringify([agentId]), now - 1000)
+  `).run(
+    nanoid(),
+    tenantId,
+    userId,
+    'chat_message',
+    10,
+    JSON.stringify({
+      agentId,
+      runId: 'run-article50',
+      disclosureMade: true,
+      disclosureMethod: 'system_prompt',
+      outputSummary: 'AI-generated compliance guidance was presented to the user.',
+    }),
+    userId,
+    JSON.stringify([agentId]),
+    now - 1000
+  )
   db.prepare(`
     INSERT INTO audit_log
       (id, tenant_id, user_id, action, risk_score, metadata, initiated_by_user_id, agent_chain, ts)
@@ -102,6 +122,7 @@ beforeEach(async () => {
   })
   await app.register(reportsRoutes, { prefix: '/reports' })
   await app.register(registerReportVerificationRoute, { prefix: '/v1/compliance/reports' })
+  await app.register(registerArticle50Routes, { prefix: '/v1/compliance/article50' })
   await app.ready()
 })
 
@@ -230,6 +251,98 @@ describe('reports routes', () => {
     expect(result.timestamp.status).toBe(status)
     expect(result.timestamp.valid).toBe(false)
     expect(result.verification_summary).toContain(message)
+  })
+
+  it.each(['general', 'healthcare', 'financial', 'hr_legal'])(
+    'generates an Article 50 PDF and records interactions for the %s template',
+    async (sectorTemplate) => {
+      const response = await generateReport({ mode: 'article50', sectorTemplate })
+
+      expect(response.statusCode).toBe(200)
+      expect(response.headers['content-type']).toContain('application/pdf')
+      expect(response.rawPayload.length).toBeGreaterThan(0)
+
+      const report = db.prepare('SELECT * FROM compliance_reports WHERE id = ?')
+        .get(response.headers['x-report-id'])
+      expect(report.report_mode).toBe('article50')
+
+      const records = db.prepare(
+        'SELECT * FROM article50_records WHERE tenant_id = ? AND sector_template = ?'
+      ).all(tenantId, sectorTemplate)
+      expect(records).toHaveLength(1)
+      expect(records[0].run_id).toBe('run-article50')
+      expect(JSON.parse(records[0].regulation_refs)).toContain('EU AI Act Article 50')
+    }
+  )
+
+  it('GET Article 50 records returns parsed regulation references and filters', async () => {
+    await generateReport({ mode: 'article50', sectorTemplate: 'financial' })
+
+    const response = await request(
+      'GET',
+      `/v1/compliance/article50/records?agent_id=${agentId}&sector_template=financial`
+    )
+    const records = response.json()
+
+    expect(response.statusCode).toBe(200)
+    expect(records).toHaveLength(1)
+    expect(records[0].disclosure_made).toBe(true)
+    expect(records[0].regulation_refs).toEqual([
+      'EU AI Act Article 50',
+      'DORA Article 17',
+      'MiFID II Article 25',
+    ])
+  })
+
+  it('POST Article 50 record creates a standalone manual record', async () => {
+    const response = await request('POST', '/v1/compliance/article50/records', {
+      agent_id: agentId,
+      run_id: 'manual-run',
+      interaction_timestamp: '2026-06-10T12:00:00.000Z',
+      disclosure_made: true,
+      disclosure_method: 'prepended_message',
+      output_summary: 'Manual Article 50 transparency record.',
+      sector_template: 'general',
+      regulation_refs: ['EU_AI_Act_Art50'],
+    })
+
+    expect(response.statusCode).toBe(201)
+    expect(response.json().regulation_refs).toEqual(['EU_AI_Act_Art50'])
+    const stored = db.prepare('SELECT * FROM article50_records WHERE run_id = ?')
+      .get('manual-run')
+    expect(JSON.parse(stored.regulation_refs)).toEqual(['EU_AI_Act_Art50'])
+  })
+
+  it.each([
+    [{}, 'missing_fields'],
+    [{
+      agent_id: 'agent',
+      run_id: 'run',
+      interaction_timestamp: '2026-06-10T12:00:00.000Z',
+      output_summary: 'summary',
+      sector_template: 'unknown',
+    }, 'invalid_sector_template'],
+    [{
+      agent_id: 'agent',
+      run_id: 'run',
+      interaction_timestamp: 'not-a-date',
+      output_summary: 'summary',
+    }, 'invalid_interaction_timestamp'],
+  ])('POST Article 50 record rejects invalid payloads', async (payload, error) => {
+    const response = await request('POST', '/v1/compliance/article50/records', payload)
+
+    expect(response.statusCode).toBe(400)
+    expect(response.json().error).toBe(error)
+  })
+
+  it('rejects invalid Article 50 report templates', async () => {
+    const response = await generateReport({
+      mode: 'article50',
+      sectorTemplate: 'unknown',
+    })
+
+    expect(response.statusCode).toBe(400)
+    expect(response.json().error).toBe('invalid_sector_template')
   })
 
   it('non-enterprise tenant receives 403', async () => {

@@ -23,7 +23,10 @@ import workflowsRoutes from './routes/workflows.js'
 import onboardingRoutes from './routes/onboarding.js'
 import accountRoutes from './routes/account.js'
 import proxyRoutes from './routes/proxy.js'
-import reportsRoutes, { registerReportVerificationRoute } from './routes/reports.js'
+import reportsRoutes, {
+  registerArticle50Routes,
+  registerReportVerificationRoute,
+} from './routes/reports.js'
 import teamRoutes from './routes/team.js'
 import notificationsRoutes from './routes/notifications.js'
 import integrationsRoutes from './routes/integrations.js'
@@ -124,6 +127,7 @@ async function start() {
   fastify.register(proxyRoutes, { prefix: '/proxy' })
   fastify.register(reportsRoutes, { prefix: '/reports' })
   fastify.register(registerReportVerificationRoute, { prefix: '/v1/compliance/reports' })
+  fastify.register(registerArticle50Routes, { prefix: '/v1/compliance/article50' })
   fastify.register(teamRoutes, { prefix: '/team' })
   fastify.register(notificationsRoutes, { prefix: '/notifications' })
   fastify.register(integrationsRoutes, { prefix: '/integrations' })

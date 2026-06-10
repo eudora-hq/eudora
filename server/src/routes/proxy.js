@@ -133,8 +133,12 @@ export default async function proxyRoutes(fastify) {
       riskScore: finalRiskScore,
       metadata: {
         agentId: agent.id,
+        runId: pipeline.runId,
         provider: pipeline.providerName,
         interceptionMode: agent.interception_mode,
+        disclosureMade: true,
+        disclosureMethod: 'system_prompt',
+        outputSummary: responseText.substring(0, 200),
         injectionDetected: pipeline.sanitiserResult.flagged,
         patterns: pipeline.sanitiserResult.patterns,
         guardViolation: pipeline.guardResult.violation,

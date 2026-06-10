@@ -7,6 +7,7 @@ import {
   requestTimestamp,
   verifyTimestamp,
 } from '../services/rfc3161.js'
+import { getArticle50Template } from '../services/article50Templates.js'
 
 const SECURITY_ACTIONS = new Set([
   'guard_block',
@@ -176,6 +177,8 @@ function collectReportData(db, {
   reportId,
   generatedAt,
   traceMode = 'flagged',
+  reportMode = traceMode,
+  sectorTemplate = 'general',
 }) {
   const tenant = db.prepare('SELECT id, name FROM tenants WHERE id = ?').get(tenantId)
   const agents = db.prepare(
@@ -197,6 +200,39 @@ function collectReportData(db, {
       metadata: parseJson(event.metadata),
     }))
   const events = normaliseAgentFilter(rawEvents, agentId)
+  const article50Template = reportMode === 'article50'
+    ? getArticle50Template(sectorTemplate)
+    : null
+  const article50Records = article50Template
+    ? events
+      .filter((event) => INTERACTION_ACTIONS.has(event.action))
+      .map((event) => {
+        const resolvedAgentId = event.metadata?.agentId
+          || parseJson(event.agent_chain, [])[0]
+        if (!resolvedAgentId) return null
+        const outputSummary = String(
+          event.metadata?.outputSummary
+          || event.metadata?.responseSummary
+          || (event.response_hash
+            ? `AI output recorded with SHA-256 hash ${event.response_hash}`
+            : `AI output recorded for ${event.action}`)
+        ).substring(0, 200)
+
+        return {
+          agentId: resolvedAgentId,
+          runId: event.metadata?.runId || event.id,
+          interactionTimestamp: iso(event.ts),
+          disclosureMade: event.metadata?.disclosureMade === false ? 0 : 1,
+          disclosureMethod: event.metadata?.disclosureMethod || 'logged_only',
+          disclosureStatement: article50Template.disclosureStatement,
+          outputSummary,
+          riskScore: Number(event.risk_score || 0),
+          sectorTemplate,
+          regulationRefs: article50Template.regulations,
+        }
+      })
+      .filter(Boolean)
+    : []
   const traceData = gatherTraceData(
     db,
     tenantId,
@@ -289,6 +325,10 @@ function collectReportData(db, {
     },
     ownership,
     traceMode,
+    reportMode,
+    sectorTemplate,
+    article50Template,
+    article50Records,
     traceData,
     securityEvents: securityEvents.map((event) => ({
       timestamp: event.ts,
@@ -378,6 +418,10 @@ function ensureSpace(doc, minimumY = 700) {
 }
 
 function renderPdf(data, reportHash) {
+  if (data.reportMode === 'article50') {
+    return renderArticle50Pdf(data, reportHash)
+  }
+
   return new Promise((resolve, reject) => {
     const doc = new PDFDocument({ margin: 40, size: 'A4' })
     const chunks = []
@@ -543,6 +587,110 @@ function renderPdf(data, reportHash) {
     doc.text(`Report hash: ${reportHash}`, 40, doc.y, { width: 515 })
     doc.moveDown(1)
     doc.text('Compliant with DORA Article 11 operational resilience requirements', 40, doc.y, { width: 515 })
+
+    doc.end()
+  })
+}
+
+function renderArticle50Pdf(data, reportHash) {
+  return new Promise((resolve, reject) => {
+    const doc = new PDFDocument({ margin: 40, size: 'A4' })
+    const chunks = []
+    doc.on('data', chunk => chunks.push(chunk))
+    doc.on('end', () => resolve(Buffer.concat(chunks)))
+    doc.on('error', reject)
+
+    writeWatermark(doc)
+    doc.font('Helvetica-Bold').fontSize(19).fillColor('#111111')
+      .text('EU AI Act Article 50 — Transparency & Accountability Record', {
+        align: 'center',
+      })
+    doc.moveDown(1.5)
+    doc.font('Helvetica').fontSize(10).fillColor('#111111')
+      .text(`Tenant: ${data.tenantName}`)
+      .text(`Sector template: ${data.article50Template.name}`)
+      .text(`Period: ${iso(data.period.dateFrom)} — ${iso(data.period.dateTo)}`)
+      .text(`Generated: ${iso(data.generatedAt)}`)
+      .text(`Report ID: ${data.reportId}`)
+      .text(`Report hash: ${reportHash}`)
+
+    sectionTitle(doc, 'Transparency Disclosure')
+    doc.font('Helvetica').fontSize(10).fillColor('#111111')
+    doc.text(data.article50Template.disclosureStatement, 40, doc.y, { width: 515 })
+    doc.moveDown(0.5)
+    doc.text(
+      `${data.article50Records.length} AI interaction record(s) are covered by this report.`,
+      40,
+      doc.y,
+      { width: 515 }
+    )
+
+    sectionTitle(doc, 'Interactions Covered')
+    tableRow(
+      doc,
+      ['Timestamp', 'Agent ID', 'Disclosure', 'Risk', 'Output Summary'],
+      [105, 85, 110, 40, 175],
+      { header: true, height: 18 }
+    )
+    if (data.article50Records.length === 0) {
+      doc.font('Helvetica').fontSize(9).fillColor('#666666')
+      doc.text('No AI interactions were recorded in this reporting period.', 40, doc.y, {
+        width: 515,
+      })
+    } else {
+      data.article50Records.forEach(record => {
+        ensureSpace(doc, 700)
+        tableRow(
+          doc,
+          [
+            record.interactionTimestamp,
+            record.agentId,
+            `${record.disclosureMade ? 'YES' : 'NO'} — ${record.disclosureMethod}`,
+            record.riskScore,
+            record.outputSummary.substring(0, 200),
+          ],
+          [105, 85, 110, 40, 175]
+        )
+      })
+    }
+
+    sectionTitle(doc, 'Applicable Regulation References')
+    doc.font('Helvetica').fontSize(10).fillColor('#111111')
+    data.article50Template.regulations.forEach(regulation => {
+      doc.text(`• ${regulation}`, 40, doc.y, { width: 515 })
+    })
+
+    sectionTitle(doc, 'Retention Notice')
+    doc.font('Helvetica').fontSize(10).fillColor('#111111')
+    doc.text(
+      `Retain this record and its supporting audit evidence for at least ${data.article50Template.retentionYears} years.`,
+      40,
+      doc.y,
+      { width: 515 }
+    )
+    if (data.article50Template.highRisk) {
+      doc.text(
+        'This sector template covers a high-risk use context and requires documented human oversight.',
+        40,
+        doc.y,
+        { width: 515 }
+      )
+    }
+
+    doc.addPage()
+    sectionTitle(doc, 'Eudora Vendor Signature')
+    doc.font('Helvetica').fontSize(11).fillColor('#111111')
+    doc.text('This report was generated by Eudora Report Engine', 40, doc.y, { width: 515 })
+    doc.text(`Timestamp: ${iso(data.generatedAt)}`, 40, doc.y, { width: 515 })
+    doc.text(`Report hash: ${reportHash}`, 40, doc.y, { width: 515 })
+    doc.moveDown(1)
+    doc.font('Helvetica-Bold').fontSize(10)
+    doc.text(
+      'Generated by Eudora. This record constitutes documentation of AI transparency obligations under EU AI Act Article 50.',
+      40,
+      doc.y,
+      { width: 515 }
+    )
 
     doc.end()
   })
