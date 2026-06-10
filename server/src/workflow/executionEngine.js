@@ -224,7 +224,20 @@ async function executeNode(node, input, tenantId, db, context = {}) {
   }
 
   if (node.type === 'human_approval') {
-    return executeHumanApprovalNode(node, input, tenantId, db, context, startedAt)
+    try {
+      return await executeHumanApprovalNode(node, input, tenantId, db, context, startedAt)
+    } catch (err) {
+      console.error('[human_approval] node error:', err.message, err.stack)
+      return {
+        nodeId: node.id,
+        agentId: null,
+        output: err.message,
+        tokensUsed: 0,
+        durationMs: Date.now() - startedAt,
+        status: 'failed',
+        error: err.message,
+      }
+    }
   }
 
   const agent = db
