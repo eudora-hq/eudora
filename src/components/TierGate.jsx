@@ -9,6 +9,7 @@ export function TierGate({ feature, message, children }) {
 
   const GATED_FEATURES = {
     workflow_builder: ['professional', 'enterprise'],
+    compliance: ['professional', 'enterprise'],
     audit_export: ['professional', 'enterprise'],
     compliance_reports: ['enterprise'],
     proxy_mode: ['professional', 'enterprise'],

@@ -18,8 +18,7 @@ export default function Sidebar() {
     navigate('/login');
   };
 
-  const hasProfessionalFeatures = plan === 'professional' || plan === 'enterprise' || isSelfHosted;
-  const navGroups = [
+  const groups = [
     {
       header: null,
       items: [
@@ -39,9 +38,7 @@ export default function Sidebar() {
     {
       header: 'COMPLIANCE',
       items: [
-        ...(hasProfessionalFeatures
-          ? [{ id: 'compliance', icon: 'verified', label: 'COMPLIANCE', path: '/compliance' }]
-          : []),
+        { id: 'compliance', icon: 'verified', label: 'COMPLIANCE', path: '/compliance', gate: 'compliance' },
         { id: 'audit', icon: 'receipt_long', label: 'NEXUS AUDIT', path: '/audit' },
         { id: 'integrations', icon: 'hub', label: 'INTEGRATIONS', path: '/integrations' },
       ],
@@ -49,14 +46,14 @@ export default function Sidebar() {
     {
       header: 'WORKFLOWS',
       items: [
-        { id: 'workflows', icon: 'account_tree', label: 'WORKFLOWS', path: '/workflows' },
+        { id: 'workflows', icon: 'account_tree', label: 'WORKFLOWS', path: '/workflows', gate: 'workflow_builder' },
         { id: 'cron', icon: 'calendar_today', label: 'SCHEDULED JOBS', path: '/cron' },
       ],
     },
     {
       header: 'ACCOUNT',
       items: [
-        ...(hasProfessionalFeatures
+        ...(plan === 'professional' || plan === 'enterprise' || isSelfHosted
           ? [{ id: 'team', icon: 'group', label: 'TEAM', path: '/team' }]
           : []),
         { id: 'settings', icon: 'settings', label: 'SETTINGS', path: '/settings' },
@@ -77,10 +74,10 @@ export default function Sidebar() {
 
       {/* Navigation */}
       <nav className="flex-1 py-4 overflow-y-auto min-h-0">
-        {navGroups.map((group, groupIndex) => (
+        {groups.map((group, groupIndex) => (
           <div key={group.header || 'primary'}>
             {group.header && (
-              <div className="font-mono text-[8px] text-text-muted uppercase tracking-[0.2em] px-6 py-2 mt-4">
+              <div className="font-mono text-[8px] text-text-muted/50 uppercase tracking-[0.2em] px-6 pt-4 pb-1">
                 {group.header}
               </div>
             )}
@@ -101,8 +98,12 @@ export default function Sidebar() {
                   </NavLink>
                 );
 
-                return item.id === 'workflows' ? (
-                  <TierGate key={item.id} feature="workflow_builder" message="Available on Professional and Enterprise plans">
+                return item.gate ? (
+                  <TierGate
+                    key={item.id}
+                    feature={item.gate}
+                    message="Available on Professional and Enterprise plans"
+                  >
                     {link}
                   </TierGate>
                 ) : link;

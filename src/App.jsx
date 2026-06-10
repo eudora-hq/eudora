@@ -27,6 +27,7 @@ import Integrations from './pages/Integrations'
 import OAuthCallback from './pages/OAuthCallback'
 import Analytics from './pages/Analytics'
 import Approvals from './pages/Approvals'
+import Compliance from './pages/Compliance'
 
 function ProtectedRoute({ children }) {
   const { isAuthenticated, user } = useAuthStore()
@@ -108,7 +109,7 @@ export default function App() {
         <Route path="/billing/success" element={<BillingSuccess />} />
         <Route path="/billing/expired" element={<ProtectedRoute><TrialExpired /></ProtectedRoute>} />
         <Route path="/" element={<ProtectedRoute><Layout /></ProtectedRoute>}>
-          <Route index element={<Navigate to="/agents" replace />} />
+          <Route index element={<Navigate to="/dashboard" replace />} />
           <Route path="agents" element={<AgentBuilder />} />
           <Route path="templates" element={<Templates />} />
           <Route path="agents/:id/context" element={<ContextManager />} />
@@ -126,6 +127,7 @@ export default function App() {
           <Route path="analytics" element={<Analytics />} />
           <Route path="approvals" element={<Approvals />} />
           <Route path="approvals/:id" element={<Approvals />} />
+          <Route path="compliance" element={<Compliance />} />
         </Route>
         <Route path="*" element={<Navigate to="/login" replace />} />
       </Routes>
