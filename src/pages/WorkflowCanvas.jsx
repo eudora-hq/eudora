@@ -1140,11 +1140,17 @@ function WorkflowEditor({ workflowId }) {
                       value={selectedNode.data.config?.on_timeout || 'reject'}
                       onChange={(value) => updateNodeConfig(selectedNode.id, 'on_timeout', value)}
                     />
-                    <ConfigInput
-                      field={NODE_DEFINITIONS.human_approval.config.approval_message}
-                      value={selectedNode.data.config?.approval_message || ''}
-                      onChange={(value) => updateNodeConfig(selectedNode.id, 'approval_message', value)}
-                    />
+                    <div className="space-y-2">
+                      <label className="font-mono text-[9px] text-text-muted uppercase tracking-widest block">
+                        {NODE_DEFINITIONS.human_approval.config.approval_message.label}
+                      </label>
+                      <textarea
+                        value={selectedNode.data.config?.approval_message || ''}
+                        onChange={(event) => updateNodeConfig(selectedNode.id, 'approval_message', event.target.value)}
+                        placeholder={NODE_DEFINITIONS.human_approval.config.approval_message.placeholder}
+                        className="w-full min-h-[88px] resize-y bg-[#050505] border border-[#262626] text-white font-mono text-[11px] px-3 py-2 focus:outline-none focus:border-primary placeholder:text-[#404040]"
+                      />
+                    </div>
                   </div>
                 )}
 
