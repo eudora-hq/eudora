@@ -74,10 +74,10 @@ export default function Sidebar() {
 
       {/* Navigation */}
       <nav className="flex-1 py-4 overflow-y-auto min-h-0">
-        {groups.map((group, groupIndex) => (
+        {groups.map((group) => (
           <div key={group.header || 'primary'}>
             {group.header && (
-              <div className="font-mono text-[8px] text-text-muted/50 uppercase tracking-[0.2em] px-6 pt-4 pb-1">
+              <div className="font-mono text-[8px] text-text-muted/50 uppercase tracking-[0.2em] px-6 pt-3 pb-1">
                 {group.header}
               </div>
             )}
@@ -87,7 +87,7 @@ export default function Sidebar() {
                   <NavLink
                     key={item.id}
                     to={item.path}
-                    className={({ isActive }) => `w-full flex items-center gap-3 px-6 py-3 transition-all ${
+                    className={({ isActive }) => `w-full flex items-center gap-3 px-6 py-2 transition-all ${
                       isActive
                         ? 'bg-primary/10 text-primary border-r-2 border-primary'
                         : 'text-text-muted hover:text-white hover:bg-white/5'
@@ -109,20 +109,18 @@ export default function Sidebar() {
                 ) : link;
               })}
             </div>
-
-            {groupIndex === 1 && (
-              <div className="mt-4 px-6">
-                <button
-                  onClick={() => navigate('/agents')}
-                  className="w-full bg-primary text-[#050505] py-2 font-mono text-[10px] uppercase font-bold tracking-widest active:scale-[0.98] transition-transform"
-                >
-                  DEPLOY AGENT
-                </button>
-              </div>
-            )}
           </div>
         ))}
       </nav>
+
+      <div className="px-6 py-2">
+        <button
+          onClick={() => navigate('/agents')}
+          className="w-full bg-primary text-[#050505] py-2 font-mono text-[10px] uppercase font-bold tracking-widest active:scale-[0.98] transition-transform"
+        >
+          DEPLOY AGENT
+        </button>
+      </div>
 
       {/* Plan Badge */}
       <div className="px-6 py-4">
@@ -140,49 +138,31 @@ export default function Sidebar() {
       </div>
 
       {/* Bottom Section */}
-      <div className="p-4 border-t border-[#262626]">
-        <div className="px-2 pb-3 mb-2 border-b border-[#262626]">
-          <span className="font-mono text-[9px] text-text-muted uppercase tracking-[0.15em] block">OPERATOR</span>
-          <span className="font-mono text-[10px] text-white uppercase tracking-[0.1em] block truncate">{user?.name || user?.email || 'UNKNOWN USER'}</span>
+      <div className="border-t border-[#262626]">
+        <div className="px-4 py-2 flex items-center gap-2">
+          <span className="material-symbols-outlined text-[14px] text-text-muted">person</span>
+          <span className="font-mono text-[9px] text-text-muted uppercase truncate">{user?.email}</span>
         </div>
-        <div className="space-y-1">
+        <div className="px-4 py-2 flex items-center gap-2">
           <button
+            title="System Health"
             onClick={() => navigate('/system-health')}
-            className="w-full flex items-center gap-3 px-2 py-2 text-text-muted hover:text-white font-mono text-[10px] tracking-[0.15em] uppercase transition-colors cursor-pointer"
+            className="flex items-center gap-1 text-text-muted hover:text-white transition-colors cursor-pointer"
           >
             <span className="material-symbols-outlined text-[16px]">monitor_heart</span>
-            SYSTEM HEALTH
+            <span className="font-mono text-[9px] uppercase tracking-widest">HEALTH</span>
           </button>
-          <button 
+          <span className="text-text-muted/30 text-[10px]">|</span>
+          <button
+            title="Logout"
             onClick={handleLogout}
-            className="w-full flex items-center gap-3 px-2 py-2 text-text-muted hover:text-white font-mono text-[10px] tracking-[0.15em] uppercase transition-colors"
+            className="flex items-center gap-1 text-text-muted hover:text-white transition-colors cursor-pointer"
           >
             <span className="material-symbols-outlined text-[16px]">logout</span>
-            LOGOUT
+            <span className="font-mono text-[9px] uppercase tracking-widest">LOGOUT</span>
           </button>
         </div>
       </div>
-
-      {isSelfHosted && (
-        <div className="border-t border-[#1a1a1a] p-4">
-          <div className="space-y-2">
-            <p className="font-mono text-[9px] text-text-muted uppercase tracking-widest leading-relaxed">
-              Self-Hosted
-            </p>
-            <p className="font-mono text-[9px] text-primary/70 uppercase tracking-widest">
-              All features unlocked
-            </p>
-            <a
-              href="https://geteudora.com"
-              target="_blank"
-              rel="noreferrer"
-              className="font-mono text-[9px] text-primary border border-primary/30 px-2 py-1.5 hover:bg-primary/10 uppercase tracking-widest transition-colors block text-center mt-1"
-            >
-              Upgrade to Cloud →
-            </a>
-          </div>
-        </div>
-      )}
     </aside>
   );
 }
