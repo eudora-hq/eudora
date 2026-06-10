@@ -18,3 +18,4 @@ node_modules/
 server/src/routes/admin.js
 server/src/admin/
 server/src/routes/__tests__/admin.test.js
+*.pyc
