@@ -1,6 +1,12 @@
 import { createHash } from 'crypto'
 import PDFDocument from 'pdfkit'
 import { getHumanRoot, validateOwnership } from '../utils/ownershipChain.js'
+import {
+  TSA_URL,
+  embedTimestampMetadata,
+  requestTimestamp,
+  verifyTimestamp,
+} from '../services/rfc3161.js'
 
 const SECURITY_ACTIONS = new Set([
   'guard_block',
@@ -545,6 +551,30 @@ function renderPdf(data, reportHash) {
 export async function generateComplianceReport(db, options) {
   const data = collectReportData(db, options)
   const reportHash = hashReportData(data)
-  const pdfBuffer = await renderPdf(data, reportHash)
-  return { reportHash, pdfBuffer, data }
+  const signedPdfBuffer = await renderPdf(data, reportHash)
+  let pdfBuffer = signedPdfBuffer
+  let timestampToken = null
+  let timestampStatus = 'unavailable'
+  let timestampTime = null
+
+  try {
+    const token = await requestTimestamp(signedPdfBuffer)
+    timestampToken = token.toString('base64')
+    const verification = await verifyTimestamp(signedPdfBuffer, token)
+    timestampTime = verification.timestamp
+    timestampStatus = verification.valid ? 'ok' : 'failed'
+    pdfBuffer = embedTimestampMetadata(signedPdfBuffer, token)
+  } catch (error) {
+    console.error('[compliance-report] RFC 3161 timestamp unavailable:', error.message)
+  }
+
+  return {
+    reportHash,
+    pdfBuffer,
+    data,
+    timestampToken,
+    timestampStatus,
+    timestampTime,
+    tsaUrl: TSA_URL,
+  }
 }

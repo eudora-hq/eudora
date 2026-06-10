@@ -1,4 +1,5 @@
-import { describe, it, expect, beforeEach, afterEach } from 'vitest'
+import { createHash } from 'crypto'
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 import Fastify from 'fastify'
 import Database from 'better-sqlite3'
 import { existsSync, rmSync } from 'fs'
@@ -12,14 +13,35 @@ process.env.SELF_HOSTED = 'false'
 process.env.JWT_SECRET = 'test-jwt-secret-32-chars-minimum!!'
 process.env.JWT_EXPIRES_IN = '15m'
 
+vi.mock('../../services/rfc3161.js', async (importOriginal) => {
+  const actual = await importOriginal()
+  return {
+    ...actual,
+    requestTimestamp: vi.fn(),
+    verifyTimestamp: vi.fn(),
+  }
+})
+
 import { authenticate } from '../../middleware/auth.js'
 import { scopeToTenant } from '../../middleware/tenantScope.js'
 import { checkTrialExpiry } from '../../middleware/trialExpiry.js'
 import { generateAccessToken } from '../../utils/auth.js'
-import reportsRoutes from '../reports.js'
+import {
+  extractTimestampedContent,
+  requestTimestamp,
+  verifyTimestamp,
+} from '../../services/rfc3161.js'
+import reportsRoutes, { registerReportVerificationRoute } from '../reports.js'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
-const migrations = ['001_initial_schema.sql', '002_agent_ownership.sql', '003_external_agents.sql', '004_pbac.sql', '005_reports.sql']
+const migrations = [
+  '001_initial_schema.sql',
+  '002_agent_ownership.sql',
+  '003_external_agents.sql',
+  '004_pbac.sql',
+  '005_reports.sql',
+  '010_rfc3161_timestamps.sql',
+]
   .map((file) => readFileSync(resolve(__dirname, '../../db/migrations', file), 'utf8'))
 const reportDir = resolve(__dirname, '../../../.compliance-reports')
 
@@ -27,6 +49,12 @@ let app, db, tenantId, userId, agentId, token
 
 beforeEach(async () => {
   process.env.SELF_HOSTED = 'false'
+  requestTimestamp.mockResolvedValue(Buffer.from('valid-tsr'))
+  verifyTimestamp.mockResolvedValue({
+    valid: true,
+    timestamp: '2026-06-10T14:23:01.000Z',
+    tsa: 'https://freetsa.org/tsr',
+  })
   db = new Database(':memory:')
   db.pragma('foreign_keys = ON')
   migrations.forEach((sql) => db.exec(sql))
@@ -73,6 +101,7 @@ beforeEach(async () => {
     await new Promise((resolveHook) => checkTrialExpiry(request, reply, resolveHook))
   })
   await app.register(reportsRoutes, { prefix: '/reports' })
+  await app.register(registerReportVerificationRoute, { prefix: '/v1/compliance/reports' })
   await app.ready()
 })
 
@@ -114,6 +143,9 @@ describe('reports routes', () => {
     const row = db.prepare('SELECT * FROM compliance_reports WHERE id = ?').get(reportId)
     expect(row.report_hash).toBe(res.headers['x-report-hash'])
     expect(row.tenant_id).toBe(tenantId)
+    expect(row.timestamp_status).toBe('ok')
+    expect(row.timestamp_token).toBe(Buffer.from('valid-tsr').toString('base64'))
+    expect(res.rawPayload.toString('binary')).toContain('/Keywords (eudora-tsr:')
   })
 
   it('GET /reports returns generated report metadata', async () => {
@@ -134,6 +166,70 @@ describe('reports routes', () => {
     expect(res.statusCode).toBe(200)
     expect(res.headers['x-report-hash']).toBe(generated.headers['x-report-hash'])
     expect(Buffer.compare(res.rawPayload, generated.rawPayload)).toBe(0)
+  })
+
+  it('report generation succeeds when the Timestamp Authority is unavailable', async () => {
+    requestTimestamp.mockRejectedValueOnce(new Error('TSA timeout'))
+
+    const generated = await generateReport()
+
+    expect(generated.statusCode).toBe(200)
+    const row = db.prepare('SELECT * FROM compliance_reports WHERE id = ?')
+      .get(generated.headers['x-report-id'])
+    expect(row.timestamp_status).toBe('unavailable')
+    expect(row.timestamp_token).toBeNull()
+  })
+
+  it('GET /reports/:id/verify validates the stored timestamp and content hash', async () => {
+    const generated = await generateReport()
+    const reportId = generated.headers['x-report-id']
+
+    const response = await request('GET', `/reports/${reportId}/verify`)
+    const result = response.json()
+
+    expect(response.statusCode).toBe(200)
+    expect(result.timestamp).toMatchObject({
+      status: 'ok',
+      valid: true,
+      time: '2026-06-10T14:23:01.000Z',
+    })
+    expect(result.verification_summary).toContain('Report content verified')
+    const canonicalPdf = extractTimestampedContent(generated.rawPayload)
+    const rehashed = `sha256:${createHash('sha256').update(canonicalPdf).digest('hex')}`
+    expect(result.content_hash).toBe(rehashed)
+  })
+
+  it('exposes the verification endpoint at the v1 compliance path', async () => {
+    const generated = await generateReport()
+    const reportId = generated.headers['x-report-id']
+
+    const response = await request('GET', `/v1/compliance/reports/${reportId}/verify`)
+
+    expect(response.statusCode).toBe(200)
+    expect(response.json().report_id).toBe(reportId)
+    expect(response.json().timestamp.valid).toBe(true)
+  })
+
+  it.each([
+    ['pending', 'Trusted timestamp verification is pending.'],
+    ['unavailable', 'Timestamp Authority was unavailable'],
+    ['failed', 'could not be verified'],
+  ])('verification endpoint explains %s timestamp status', async (status, message) => {
+    const generated = await generateReport()
+    const reportId = generated.headers['x-report-id']
+    db.prepare(`
+      UPDATE compliance_reports
+      SET timestamp_status = ?, timestamp_token = NULL
+      WHERE id = ?
+    `).run(status, reportId)
+
+    const response = await request('GET', `/reports/${reportId}/verify`)
+    const result = response.json()
+
+    expect(response.statusCode).toBe(200)
+    expect(result.timestamp.status).toBe(status)
+    expect(result.timestamp.valid).toBe(false)
+    expect(result.verification_summary).toContain(message)
   })
 
   it('non-enterprise tenant receives 403', async () => {

@@ -38,6 +38,8 @@ export default function AuditLog() {
   });
   const [reportError, setReportError] = useState('');
   const [reportLoading, setReportLoading] = useState(false);
+  const [verification, setVerification] = useState(null);
+  const [verificationLoading, setVerificationLoading] = useState(false);
 
   const fetchAudit = async (nextPage = page) => {
     setIsLoading(true);
@@ -151,6 +153,19 @@ export default function AuditLog() {
     }
   };
 
+  const handleVerifyReport = async (report) => {
+    setVerificationLoading(true);
+    setReportError('');
+    try {
+      const res = await api.get(`/reports/${report.id}/verify`);
+      setVerification(res.data);
+    } catch {
+      setReportError('Unable to verify stored report');
+    } finally {
+      setVerificationLoading(false);
+    }
+  };
+
   const start = total === 0 ? 0 : (page - 1) * LIMIT + 1;
   const end = Math.min(page * LIMIT, total);
 
@@ -239,10 +254,11 @@ export default function AuditLog() {
           )}
 
           <div className="border border-[#262626] bg-[#050505]">
-            <div className="grid grid-cols-[1fr_1fr_1.4fr_120px] gap-4 px-4 py-3 border-b border-[#262626]">
+            <div className="grid grid-cols-[1fr_1fr_1.2fr_150px_120px] gap-4 px-4 py-3 border-b border-[#262626]">
               <span className="font-mono text-[9px] text-primary uppercase tracking-widest">Generated</span>
               <span className="font-mono text-[9px] text-primary uppercase tracking-widest">Period</span>
               <span className="font-mono text-[9px] text-primary uppercase tracking-widest">Hash</span>
+              <span className="font-mono text-[9px] text-primary uppercase tracking-widest">Verified</span>
               <span className="font-mono text-[9px] text-primary uppercase tracking-widest"></span>
             </div>
             {reports.length === 0 ? (
@@ -250,10 +266,18 @@ export default function AuditLog() {
                 <span className="font-mono text-[10px] text-text-muted uppercase tracking-widest">NO COMPLIANCE REPORTS GENERATED</span>
               </div>
             ) : reports.map(report => (
-              <div key={report.id} className="grid grid-cols-[1fr_1fr_1.4fr_120px] gap-4 items-center px-4 py-3 border-b border-[#262626] last:border-b-0">
+              <div key={report.id} className="grid grid-cols-[1fr_1fr_1.2fr_150px_120px] gap-4 items-center px-4 py-3 border-b border-[#262626] last:border-b-0">
                 <span className="font-mono text-[10px] text-white uppercase tracking-widest">{formatTimestamp(report.generated_at)}</span>
                 <span className="font-mono text-[10px] text-text-muted uppercase tracking-widest">{formatShortDate(report.date_from)} — {formatShortDate(report.date_to)}</span>
                 <span className="font-mono text-[10px] text-text-muted truncate">{report.report_hash}</span>
+                <button
+                  onClick={() => handleVerifyReport(report)}
+                  disabled={verificationLoading}
+                  className={`inline-flex w-fit items-center gap-1.5 border px-2 py-1 font-mono text-[8px] uppercase tracking-widest cursor-pointer transition-colors disabled:opacity-50 ${timestampClass(report.timestamp_status)}`}
+                >
+                  <span className="material-symbols-outlined text-[13px]">{timestampIcon(report.timestamp_status)}</span>
+                  {timestampLabel(report)}
+                </button>
                 <button onClick={() => handleDownloadReport(report)} className="border border-[#262626] text-text-muted hover:border-primary hover:text-white px-3 py-2 font-mono text-[9px] uppercase tracking-widest transition-colors cursor-pointer">
                   DOWNLOAD
                 </button>
@@ -262,6 +286,28 @@ export default function AuditLog() {
           </div>
         </div>
       </TierGate>
+
+      {verification && (
+        <div className="fixed inset-0 z-50 bg-black/70 flex items-center justify-center p-6" onClick={() => setVerification(null)}>
+          <div className="w-full max-w-2xl border border-[#262626] bg-[#0a0a0a]" onClick={(event) => event.stopPropagation()}>
+            <div className="flex items-center justify-between px-5 py-4 border-b border-[#262626]">
+              <div>
+                <p className="font-mono text-[10px] text-primary uppercase tracking-widest">Report Verification</p>
+                <p className="font-mono text-[9px] text-text-muted mt-1">{verification.report_id}</p>
+              </div>
+              <button onClick={() => setVerification(null)} className="material-symbols-outlined text-text-muted hover:text-white text-[20px] cursor-pointer">close</button>
+            </div>
+            <div className="p-5 space-y-4">
+              <p className={`font-mono text-[11px] ${verification.timestamp?.valid ? 'text-primary' : 'text-amber-400'}`}>
+                {verification.verification_summary}
+              </p>
+              <pre className="bg-[#050505] border border-[#262626] p-4 overflow-x-auto max-h-[420px] font-mono text-[10px] text-text-muted leading-relaxed">
+{JSON.stringify(verification, null, 2)}
+              </pre>
+            </div>
+          </div>
+        </div>
+      )}
 
       <div className="border border-[#262626] bg-[#0a0a0a] flex flex-col">
         <div className="grid grid-cols-[1.4fr_1fr_0.7fr_48px] gap-4 px-6 py-4 border-b border-[#262626] bg-[#050505]">
@@ -357,6 +403,26 @@ function endOfDay(dateValue) {
   const date = new Date(dateValue);
   date.setHours(23, 59, 59, 999);
   return date.getTime();
+}
+
+function timestampClass(status) {
+  if (status === 'ok') return 'border-primary/30 text-primary bg-primary/5 hover:bg-primary/10';
+  if (status === 'pending') return 'border-amber-400/30 text-amber-400 bg-amber-400/5 hover:bg-amber-400/10';
+  return 'border-[#404040] text-text-muted bg-[#111] hover:text-white';
+}
+
+function timestampIcon(status) {
+  if (status === 'ok') return 'verified';
+  if (status === 'pending') return 'schedule';
+  return 'cloud_off';
+}
+
+function timestampLabel(report) {
+  if (report.timestamp_status === 'ok' && report.timestamp_time) {
+    return formatTimestamp(new Date(report.timestamp_time).getTime());
+  }
+  if (report.timestamp_status === 'pending') return 'Pending';
+  return 'Unavailable';
 }
 
 function actionClass(action) {
