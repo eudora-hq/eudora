@@ -204,23 +204,33 @@ async function executeNode(node, input, tenantId, db, context = {}) {
   const startedAt = Date.now()
 
   if (node.type === 'fetch_url') {
-    return executeFetchUrlNode(node, input, tenantId, db, context, startedAt)
+    return executeIsolatedNode(node, startedAt, () => (
+      executeFetchUrlNode(node, input, tenantId, db, context, startedAt)
+    ))
   }
 
   if (node.type === 'fetch_api') {
-    return executeFetchApiNode(node, input, tenantId, db, context, startedAt)
+    return executeIsolatedNode(node, startedAt, () => (
+      executeFetchApiNode(node, input, tenantId, db, context, startedAt)
+    ))
   }
 
   if (node.type === 'fetch_rss') {
-    return executeFetchRssNode(node, input, tenantId, db, context, startedAt)
+    return executeIsolatedNode(node, startedAt, () => (
+      executeFetchRssNode(node, input, tenantId, db, context, startedAt)
+    ))
   }
 
   if (node.type === 'webhook_out') {
-    return executeWebhookOutNode(node, input, tenantId, db, context, startedAt)
+    return executeIsolatedNode(node, startedAt, () => (
+      executeWebhookOutNode(node, input, tenantId, db, context, startedAt)
+    ))
   }
 
   if (node.type === 'send_email') {
-    return executeSendEmailNode(node, input, tenantId, db, context, startedAt)
+    return executeIsolatedNode(node, startedAt, () => (
+      executeSendEmailNode(node, input, tenantId, db, context, startedAt)
+    ))
   }
 
   if (node.type === 'human_approval') {
@@ -295,6 +305,23 @@ async function executeNode(node, input, tenantId, db, context = {}) {
       tokensUsed: 0,
       durationMs: Date.now() - startedAt,
       status: 'failed',
+    }
+  }
+}
+
+async function executeIsolatedNode(node, startedAt, execute) {
+  try {
+    return await execute()
+  } catch (err) {
+    console.error(`[${node.type}] node error:`, err.message, err.stack)
+    return {
+      nodeId: node.id,
+      agentId: null,
+      output: err.message,
+      tokensUsed: 0,
+      durationMs: Date.now() - startedAt,
+      status: 'failed',
+      error: err.message,
     }
   }
 }

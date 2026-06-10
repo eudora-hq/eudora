@@ -375,7 +375,7 @@ function Article50Records({ records, agents, agentNames, filters, setFilters }) 
         <table className="w-full min-w-[960px]">
           <thead>
             <tr className="border-b border-[#262626]">
-              {['TIMESTAMP', 'AGENT', 'SECTOR TEMPLATE', 'REGULATIONS', 'DISCLOSURE'].map(label => (
+              {['TIMESTAMP', 'AGENT', 'SECTOR TEMPLATE', 'REGULATIONS', 'DISCLOSURE', 'RISK'].map(label => (
                 <th key={label} className="text-left px-5 py-3 font-mono text-[8px] text-primary uppercase tracking-widest">
                   {label}
                 </th>
@@ -385,8 +385,8 @@ function Article50Records({ records, agents, agentNames, filters, setFilters }) 
           <tbody>
             {records.length === 0 ? (
               <tr>
-                <td colSpan="5" className="px-5 py-12 text-center font-mono text-[10px] text-text-muted uppercase tracking-widest">
-                  No Article 50 records found
+                <td colSpan="6" className="px-5 py-12 text-center font-mono text-[10px] text-text-muted">
+                  No Article 50 records yet. Generate an Article 50 compliance report to create records automatically.
                 </td>
               </tr>
             ) : records.map(record => (
@@ -395,11 +395,13 @@ function Article50Records({ records, agents, agentNames, filters, setFilters }) 
                 <td className="px-5 py-4 font-mono text-[10px] text-text-muted">
                   {agentNames[record.agent_id] || record.agent_id}
                 </td>
-                <td className="px-5 py-4 font-mono text-[9px] text-text-muted uppercase tracking-widest">
-                  {sectorLabel(record.sector_template)}
+                <td className="px-5 py-4">
+                  <span className="border border-primary/30 bg-primary/5 px-2 py-1 font-mono text-[8px] text-primary uppercase tracking-widest">
+                    {sectorLabel(record.sector_template)}
+                  </span>
                 </td>
                 <td className="px-5 py-4 font-mono text-[9px] text-text-muted leading-relaxed">
-                  {(record.regulation_refs || []).join(' · ') || '—'}
+                  {regulationsLabel(record.regulation_refs)}
                 </td>
                 <td className="px-5 py-4">
                   <span className={`border px-2 py-1 font-mono text-[8px] uppercase tracking-widest ${
@@ -407,11 +409,14 @@ function Article50Records({ records, agents, agentNames, filters, setFilters }) 
                       ? 'border-primary/30 bg-primary/5 text-primary'
                       : 'border-red-400/30 bg-red-400/5 text-red-400'
                   }`}>
-                    {record.disclosure_made ? 'MADE' : 'NOT RECORDED'}
+                    {record.disclosure_made ? 'YES' : 'NO'}
                   </span>
                   {record.disclosure_method && (
                     <p className="font-mono text-[8px] text-text-muted mt-2 uppercase">{record.disclosure_method}</p>
                   )}
+                </td>
+                <td className="px-5 py-4">
+                  <RiskBadge score={record.risk_score} />
                 </td>
               </tr>
             ))}
@@ -559,6 +564,29 @@ function modeLabel(mode) {
 
 function sectorLabel(sector) {
   return SECTORS.find(item => item.value === sector)?.label || String(sector || 'general').toUpperCase()
+}
+
+function regulationsLabel(regulations) {
+  if (!Array.isArray(regulations) || regulations.length === 0) return '—'
+  const visible = regulations.slice(0, 2).join(', ')
+  return regulations.length > 2 ? `${visible} +${regulations.length - 2} more` : visible
+}
+
+function RiskBadge({ score }) {
+  if (score == null) {
+    return <span className="font-mono text-[8px] text-text-muted">—</span>
+  }
+  const value = Number(score)
+  const colours = value <= 20
+    ? 'border-primary/30 bg-primary/5 text-primary'
+    : value <= 50
+      ? 'border-amber-400/30 bg-amber-400/5 text-amber-400'
+      : 'border-red-400/30 bg-red-400/5 text-red-400'
+  return (
+    <span className={`border px-2 py-1 font-mono text-[8px] uppercase tracking-widest ${colours}`}>
+      {value}
+    </span>
+  )
 }
 
 function timestampClass(status) {

@@ -1,0 +1,4 @@
+test_live.py
+__pycache__/
+*.pyc
+*.egg-info/

@@ -287,6 +287,7 @@ describe('reports routes', () => {
     expect(response.statusCode).toBe(200)
     expect(records).toHaveLength(1)
     expect(records[0].disclosure_made).toBe(true)
+    expect(records[0].risk_score).toBe(10)
     expect(records[0].regulation_refs).toEqual([
       'EU AI Act Article 50',
       'DORA Article 17',

@@ -140,15 +140,35 @@ export async function registerArticle50Routes(fastify) {
       params.push(sectorTemplate)
     }
 
-    return db.prepare(`
+    const records = db.prepare(`
       SELECT * FROM article50_records
       WHERE ${clauses.join(' AND ')}
       ORDER BY interaction_timestamp DESC
-    `).all(...params).map(record => ({
-      ...record,
-      disclosure_made: Boolean(record.disclosure_made),
-      regulation_refs: JSON.parse(record.regulation_refs || '[]'),
-    }))
+    `).all(...params)
+
+    const findRiskScore = db.prepare(`
+      SELECT risk_score FROM audit_log
+      WHERE tenant_id = ?
+        AND (
+          id = ?
+          OR CASE
+            WHEN json_valid(metadata) THEN json_extract(metadata, '$.runId')
+            ELSE NULL
+          END = ?
+        )
+      ORDER BY ts DESC
+      LIMIT 1
+    `)
+
+    return records.map(record => {
+      const auditEvent = findRiskScore.get(request.tenantId, record.run_id, record.run_id)
+      return {
+        ...record,
+        disclosure_made: Boolean(record.disclosure_made),
+        regulation_refs: JSON.parse(record.regulation_refs || '[]'),
+        risk_score: auditEvent?.risk_score ?? null,
+      }
+    })
   })
 
   fastify.post('/records', async (request, reply) => {

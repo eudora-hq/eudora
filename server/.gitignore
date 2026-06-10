@@ -1,1 +1,5 @@
 node_modules/
+
+# Debug scripts (never commit)
+debug_*.cjs
+tmp_*.cjs
