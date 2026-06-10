@@ -12,7 +12,7 @@ export default async function apiKeysRoutes(fastify) {
 
   // POST /api-keys
   fastify.post('/', async (request, reply) => {
-    const { provider, auth_type = 'key', label, key, base_url } = request.body || {}
+    const { provider, auth_type = 'key', label, key, base_url, default_model } = request.body || {}
 
     if (!provider) return reply.code(400).send({ error: 'provider is required' })
     if (!label) return reply.code(400).send({ error: 'label is required' })
@@ -37,16 +37,17 @@ export default async function apiKeysRoutes(fastify) {
 
     const id = nanoid()
     const created_at = Date.now()
-    if (hasModelName) {
+    if (hasModelName && apiKeyColumns.has('default_model')) {
       db.prepare(
         `INSERT INTO api_keys
-           (id, tenant_id, user_id, provider, auth_type, label, base_url, key_encrypted, key_iv, model_name, created_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+           (id, tenant_id, user_id, provider, auth_type, label, base_url, key_encrypted, key_iv, model_name, default_model, created_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
       ).run(
         id, request.tenantId, request.user.userId,
         provider, auth_type, label,
         base_url ?? null, key_encrypted, key_iv,
         request.body.model_name ?? null,
+        default_model?.trim() || null,
         created_at
       )
     } else {
@@ -62,7 +63,15 @@ export default async function apiKeysRoutes(fastify) {
       )
     }
 
-    return reply.code(201).send({ id, provider, auth_type, label, base_url: base_url ?? null, created_at })
+    return reply.code(201).send({
+      id,
+      provider,
+      auth_type,
+      label,
+      base_url: base_url ?? null,
+      default_model: default_model?.trim() || null,
+      created_at,
+    })
   })
 
   // POST /api-keys/test
@@ -165,7 +174,7 @@ export default async function apiKeysRoutes(fastify) {
   fastify.get('/', async (request, reply) => {
     const rows = db
       .prepare(
-        'SELECT id, provider, auth_type, label, base_url, key_encrypted IS NOT NULL AS has_key, created_at FROM api_keys WHERE tenant_id = ?'
+        'SELECT id, provider, auth_type, label, base_url, default_model, key_encrypted IS NOT NULL AS has_key, created_at FROM api_keys WHERE tenant_id = ?'
       )
       .all(request.tenantId)
     return reply.send(rows)
@@ -174,7 +183,7 @@ export default async function apiKeysRoutes(fastify) {
   // PATCH /api-keys/:id
   fastify.patch('/:id', async (request, reply) => {
     const { id } = request.params
-    const { base_url } = request.body || {}
+    const { base_url, default_model } = request.body || {}
     const row = db.prepare(`
       SELECT id, tenant_id, provider
       FROM api_keys
@@ -185,28 +194,44 @@ export default async function apiKeysRoutes(fastify) {
     if (row.tenant_id !== request.tenantId) {
       return reply.code(403).send({ error: 'forbidden' })
     }
-    if (row.provider !== 'ollama') {
+    const updatingBaseUrl = base_url !== undefined
+    const updatingModel = default_model !== undefined
+    if (!updatingBaseUrl && !updatingModel) {
+      return reply.code(400).send({ error: 'no_updates' })
+    }
+    if (updatingBaseUrl && row.provider !== 'ollama') {
       return reply.code(400).send({ error: 'provider_not_supported' })
     }
 
-    let parsed
-    try {
-      parsed = new URL(base_url)
-    } catch {
-      return reply.code(400).send({ error: 'invalid_base_url' })
-    }
-    if (!['http:', 'https:'].includes(parsed.protocol)) {
-      return reply.code(400).send({ error: 'invalid_base_url' })
+    let normalizedUrl = null
+    if (updatingBaseUrl) {
+      let parsed
+      try {
+        parsed = new URL(base_url)
+      } catch {
+        return reply.code(400).send({ error: 'invalid_base_url' })
+      }
+      if (!['http:', 'https:'].includes(parsed.protocol)) {
+        return reply.code(400).send({ error: 'invalid_base_url' })
+      }
+      normalizedUrl = base_url.replace(/\/+$/, '')
     }
 
-    const normalizedUrl = base_url.replace(/\/+$/, '')
     db.prepare(`
       UPDATE api_keys
-      SET base_url = ?
+      SET base_url = ?, default_model = ?
       WHERE id = ? AND tenant_id = ?
-    `).run(normalizedUrl, id, request.tenantId)
+    `).run(
+      updatingBaseUrl ? normalizedUrl : db.prepare('SELECT base_url FROM api_keys WHERE id = ?').get(id).base_url,
+      updatingModel ? (default_model?.trim() || null) : db.prepare('SELECT default_model FROM api_keys WHERE id = ?').get(id).default_model,
+      id,
+      request.tenantId
+    )
 
-    return reply.send({ id, provider: row.provider, base_url: normalizedUrl })
+    const updated = db.prepare(
+      'SELECT id, provider, base_url, default_model FROM api_keys WHERE id = ? AND tenant_id = ?'
+    ).get(id, request.tenantId)
+    return reply.send(updated)
   })
 
   // DELETE /api-keys/:id

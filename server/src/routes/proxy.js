@@ -8,6 +8,7 @@ import { log } from '../audit/auditLogger.js'
 import { record } from '../audit/traceRecorder.js'
 import { getHumanRoot } from '../utils/ownershipChain.js'
 import { nanoid } from 'nanoid'
+import { resolveModel } from '../utils/resolveModel.js'
 
 function extractOpenAIMessage(body) {
   const messages = body.messages || []
@@ -113,7 +114,14 @@ export default async function proxyRoutes(fastify) {
     }
   }
 
-  function auditProxy(agent, pipeline, blocked, responseText = '', scopeResult = null) {
+  function auditProxy(
+    agent,
+    pipeline,
+    blocked,
+    responseText = '',
+    scopeResult = null,
+    resolvedModel = null
+  ) {
     const ownerChain = JSON.parse(agent.owner_chain || '[]')
     const humanRoot = agent.owner_type === 'human'
       ? agent.owner_id
@@ -131,6 +139,7 @@ export default async function proxyRoutes(fastify) {
       action: blocked ? 'proxy_blocked' : 'proxy_forwarded',
       response: responseText,
       riskScore: finalRiskScore,
+      resolvedModel,
       metadata: {
         agentId: agent.id,
         runId: pipeline.runId,
@@ -161,6 +170,16 @@ export default async function proxyRoutes(fastify) {
       'SELECT * FROM api_keys WHERE id = ? AND tenant_id = ?'
     ).get(agent.api_key_id, agent.tenant_id)
 
+    if (!apiKey && agent.endpoint_url) {
+      return {
+        tenant_id: agent.tenant_id,
+        provider: agent.provider_hint,
+        base_url: agent.endpoint_url,
+        default_model: null,
+        key_encrypted: null,
+        key_iv: null,
+      }
+    }
     if (!apiKey) {
       reply.code(503).send({ error: 'no_api_key' })
       return null
@@ -169,34 +188,52 @@ export default async function proxyRoutes(fastify) {
     return apiKey
   }
 
+  function proxyModel(agent, apiKey, requestModel = null) {
+    return resolveModel(agent, apiKey) || requestModel || null
+  }
+
+  function endpoint(base, path) {
+    return `${String(base).replace(/\/+$/, '')}${path}`
+  }
+
   fastify.post('/openai/v1/chat/completions', {
     preHandler: authenticateProxy,
   }, async (request, reply) => {
     const agent = request.proxyAgent
     const pipeline = runCompliancePipeline(agent, extractOpenAIMessage(request.body), 'openai')
+    const configuredConnection = agent.api_key_id
+      ? db.prepare('SELECT * FROM api_keys WHERE id = ? AND tenant_id = ?')
+        .get(agent.api_key_id, agent.tenant_id)
+      : null
+    const blockedModel = proxyModel(agent, configuredConnection, request.body?.model)
     const shouldBlock = agent.interception_mode === 'block' && pipeline.guardResult.allowed === false
 
     if (shouldBlock) {
-      auditProxy(agent, pipeline, true)
+      auditProxy(agent, pipeline, true, '', null, blockedModel)
       return reply.code(400).send(buildRefusal('openai'))
     }
 
     const apiKey = await getAgentApiKey(agent, reply)
     if (!apiKey) return
     const decryptedKey = getApiCredential(apiKey)
+    const resolvedModel = proxyModel(agent, apiKey, request.body?.model)
+    const body = resolvedModel ? { ...request.body, model: resolvedModel } : request.body
+    const targetUrl = agent.endpoint_url
+      ? endpoint(agent.endpoint_url, '/v1/chat/completions')
+      : 'https://api.openai.com/v1/chat/completions'
 
-    const response = await fetch('https://api.openai.com/v1/chat/completions', {
+    const response = await fetch(targetUrl, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
-        Authorization: `Bearer ${decryptedKey}`,
+        ...(decryptedKey ? { Authorization: `Bearer ${decryptedKey}` } : {}),
       },
-      body: JSON.stringify(request.body),
+      body: JSON.stringify(body),
     })
 
     const data = await response.json()
     const responseText = extractOpenAIResponseText(data)
-    auditProxy(agent, pipeline, false, responseText, enforceScope(responseText, agent.purpose))
+    auditProxy(agent, pipeline, false, responseText, enforceScope(responseText, agent.purpose), resolvedModel)
     return reply.code(response.status).send(data)
   })
 
@@ -205,30 +242,40 @@ export default async function proxyRoutes(fastify) {
   }, async (request, reply) => {
     const agent = request.proxyAgent
     const pipeline = runCompliancePipeline(agent, extractAnthropicMessage(request.body), 'anthropic')
+    const configuredConnection = agent.api_key_id
+      ? db.prepare('SELECT * FROM api_keys WHERE id = ? AND tenant_id = ?')
+        .get(agent.api_key_id, agent.tenant_id)
+      : null
+    const blockedModel = proxyModel(agent, configuredConnection, request.body?.model)
     const shouldBlock = agent.interception_mode === 'block' && pipeline.guardResult.allowed === false
 
     if (shouldBlock) {
-      auditProxy(agent, pipeline, true)
+      auditProxy(agent, pipeline, true, '', null, blockedModel)
       return reply.code(400).send(buildRefusal('anthropic'))
     }
 
     const apiKey = await getAgentApiKey(agent, reply)
     if (!apiKey) return
     const decryptedKey = getApiCredential(apiKey)
+    const resolvedModel = proxyModel(agent, apiKey, request.body?.model)
+    const body = resolvedModel ? { ...request.body, model: resolvedModel } : request.body
+    const targetUrl = agent.endpoint_url
+      ? endpoint(agent.endpoint_url, '/v1/messages')
+      : 'https://api.anthropic.com/v1/messages'
 
-    const response = await fetch('https://api.anthropic.com/v1/messages', {
+    const response = await fetch(targetUrl, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
-        'x-api-key': decryptedKey,
+        ...(decryptedKey ? { 'x-api-key': decryptedKey } : {}),
         'anthropic-version': '2023-06-01',
       },
-      body: JSON.stringify(request.body),
+      body: JSON.stringify(body),
     })
 
     const data = await response.json()
     const responseText = extractAnthropicResponseText(data)
-    auditProxy(agent, pipeline, false, responseText, enforceScope(responseText, agent.purpose))
+    auditProxy(agent, pipeline, false, responseText, enforceScope(responseText, agent.purpose), resolvedModel)
     return reply.code(response.status).send(data)
   })
 
@@ -239,17 +286,25 @@ export default async function proxyRoutes(fastify) {
     const { resource, model } = request.params
     const apiVersion = request.query['api-version'] || '2024-02-01'
     const pipeline = runCompliancePipeline(agent, extractOpenAIMessage(request.body), 'azure')
+    const configuredConnection = agent.api_key_id
+      ? db.prepare('SELECT * FROM api_keys WHERE id = ? AND tenant_id = ?')
+        .get(agent.api_key_id, agent.tenant_id)
+      : null
+    const blockedModel = proxyModel(agent, configuredConnection, model)
     const shouldBlock = agent.interception_mode === 'block' && pipeline.guardResult.allowed === false
 
     if (shouldBlock) {
-      auditProxy(agent, pipeline, true)
+      auditProxy(agent, pipeline, true, '', null, blockedModel)
       return reply.code(400).send(buildRefusal('openai'))
     }
 
     const apiKey = await getAgentApiKey(agent, reply)
     if (!apiKey) return
     const decryptedKey = getApiCredential(apiKey)
-    const url = `https://${resource}.openai.azure.com/openai/deployments/${model}/chat/completions?api-version=${apiVersion}`
+    const resolvedModel = proxyModel(agent, apiKey, model)
+    const url = agent.endpoint_url
+      ? endpoint(agent.endpoint_url, `/openai/deployments/${resolvedModel}/chat/completions?api-version=${apiVersion}`)
+      : `https://${resource}.openai.azure.com/openai/deployments/${resolvedModel}/chat/completions?api-version=${apiVersion}`
 
     const response = await fetch(url, {
       method: 'POST',
@@ -262,7 +317,7 @@ export default async function proxyRoutes(fastify) {
 
     const data = await response.json()
     const responseText = extractOpenAIResponseText(data)
-    auditProxy(agent, pipeline, false, responseText, enforceScope(responseText, agent.purpose))
+    auditProxy(agent, pipeline, false, responseText, enforceScope(responseText, agent.purpose), resolvedModel)
     return reply.code(response.status).send(data)
   })
 
@@ -271,28 +326,34 @@ export default async function proxyRoutes(fastify) {
   }, async (request, reply) => {
     const agent = request.proxyAgent
     const pipeline = runCompliancePipeline(agent, extractOpenAIMessage(request.body), 'custom')
+    const configuredConnection = agent.api_key_id
+      ? db.prepare('SELECT * FROM api_keys WHERE id = ? AND tenant_id = ?')
+        .get(agent.api_key_id, agent.tenant_id)
+      : null
+    const blockedModel = proxyModel(agent, configuredConnection, request.body?.model)
     const shouldBlock = agent.interception_mode === 'block' && pipeline.guardResult.allowed === false
 
     if (shouldBlock) {
-      auditProxy(agent, pipeline, true)
+      auditProxy(agent, pipeline, true, '', null, blockedModel)
       return reply.code(400).send(buildRefusal('openai'))
     }
 
     const apiKey = await getAgentApiKey(agent, reply)
     if (!apiKey) return
     const decryptedKey = getApiCredential(apiKey)
+    const resolvedModel = proxyModel(agent, apiKey, request.body?.model)
     const headers = { 'Content-Type': 'application/json' }
     if (decryptedKey) headers.Authorization = `Bearer ${decryptedKey}`
 
-    const response = await fetch(`${apiKey.base_url}/v1/chat/completions`, {
+    const response = await fetch(endpoint(agent.endpoint_url || apiKey.base_url, '/v1/chat/completions'), {
       method: 'POST',
       headers,
-      body: JSON.stringify(request.body),
+      body: JSON.stringify(resolvedModel ? { ...request.body, model: resolvedModel } : request.body),
     })
 
     const data = await response.json()
     const responseText = extractOpenAIResponseText(data)
-    auditProxy(agent, pipeline, false, responseText, enforceScope(responseText, agent.purpose))
+    auditProxy(agent, pipeline, false, responseText, enforceScope(responseText, agent.purpose), resolvedModel)
     return reply.code(response.status).send(data)
   })
 }

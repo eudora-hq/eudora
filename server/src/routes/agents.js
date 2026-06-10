@@ -57,6 +57,8 @@ export default async function agentsRoutes(fastify) {
       providerHint,
       interceptionMode,
       apiKeyId,
+      endpoint_url,
+      default_model,
     } = request.body
 
     if (!name || !purpose || !ownerType || !ownerId) {
@@ -104,9 +106,9 @@ export default async function agentsRoutes(fastify) {
         id, tenant_id, name, purpose, model_provider, api_key_id,
         agent_type, proxy_key_encrypted, proxy_key_iv, proxy_key_prefix,
         provider_hint, interception_mode, status, owner_type, owner_id,
-        owner_chain, created_at
+        owner_chain, model_override, endpoint_url, created_at
       )
-      VALUES (?, ?, ?, ?, ?, ?, 'external', ?, ?, ?, ?, ?, 'live', ?, ?, ?, ?)
+      VALUES (?, ?, ?, ?, ?, ?, 'external', ?, ?, ?, ?, ?, 'live', ?, ?, ?, ?, ?, ?)
     `).run(
       agentId,
       request.tenantId,
@@ -122,6 +124,8 @@ export default async function agentsRoutes(fastify) {
       ownerType,
       ownerId,
       JSON.stringify(ownership.chain),
+      default_model?.trim() || null,
+      endpoint_url?.trim() || null,
       now
     )
 
@@ -130,7 +134,14 @@ export default async function agentsRoutes(fastify) {
       userId: request.user.userId,
       action: 'agent_registered_external',
       riskScore: 0,
-      metadata: { name, providerHint: resolvedProvider, interceptionMode: mode, agentId },
+      metadata: {
+        name,
+        providerHint: resolvedProvider,
+        interceptionMode: mode,
+        endpointUrl: endpoint_url?.trim() || null,
+        modelOverride: default_model?.trim() || null,
+        agentId,
+      },
       initiatedByUserId: request.user.userId,
       agentChain: [agentId],
     }, db)
@@ -275,6 +286,8 @@ export default async function agentsRoutes(fastify) {
       system_prompt,
       owner_type,
       owner_id,
+      model_override,
+      endpoint_url,
     } = request.body
 
     if (!name || !purpose || !model_provider) {
@@ -314,8 +327,8 @@ export default async function agentsRoutes(fastify) {
     db.prepare(
       `INSERT INTO agents
         (id, tenant_id, name, purpose, model_provider, api_key_id, system_prompt,
-         owner_type, owner_id, owner_chain, created_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+         owner_type, owner_id, owner_chain, model_override, endpoint_url, created_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
     ).run(
       id,
       request.tenantId,
@@ -327,6 +340,8 @@ export default async function agentsRoutes(fastify) {
       resolvedOwnerType,
       resolvedOwnerId,
       JSON.stringify(ownership.chain),
+      model_override?.trim() || null,
+      endpoint_url?.trim() || null,
       Date.now()
     )
 
@@ -350,7 +365,15 @@ export default async function agentsRoutes(fastify) {
       system_prompt,
       owner_type,
       owner_id,
+      model_override,
+      endpoint_url,
     } = request.body
+    const nextModelOverride = model_override !== undefined
+      ? (model_override?.trim() || null)
+      : agent.model_override
+    const nextEndpointUrl = endpoint_url !== undefined
+      ? (endpoint_url?.trim() || null)
+      : agent.endpoint_url
 
     // If ownership is being changed, validate the new ownership
     if (owner_type || owner_id) {
@@ -379,12 +402,15 @@ export default async function agentsRoutes(fastify) {
           model_provider = COALESCE(?, model_provider),
           api_key_id = COALESCE(?, api_key_id),
           system_prompt = COALESCE(?, system_prompt),
+          model_override = ?,
+          endpoint_url = ?,
           owner_type = ?,
           owner_id = ?,
           owner_chain = ?
          WHERE id = ? AND tenant_id = ?`
       ).run(
         name, purpose, model_provider, api_key_id, system_prompt,
+        nextModelOverride, nextEndpointUrl,
         newOwnerType,
         newOwnerId,
         JSON.stringify(ownership.chain),
@@ -399,10 +425,13 @@ export default async function agentsRoutes(fastify) {
           purpose = COALESCE(?, purpose),
           model_provider = COALESCE(?, model_provider),
           api_key_id = COALESCE(?, api_key_id),
-          system_prompt = COALESCE(?, system_prompt)
+          system_prompt = COALESCE(?, system_prompt),
+          model_override = ?,
+          endpoint_url = ?
          WHERE id = ? AND tenant_id = ?`
       ).run(
         name, purpose, model_provider, api_key_id, system_prompt,
+        nextModelOverride, nextEndpointUrl,
         request.params.id,
         request.tenantId
       )

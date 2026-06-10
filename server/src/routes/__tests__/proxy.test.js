@@ -16,6 +16,7 @@ const __dirname = dirname(fileURLToPath(import.meta.url))
 const migration001 = readFileSync(resolve(__dirname, '../../db/migrations/001_initial_schema.sql'), 'utf8')
 const migration002 = readFileSync(resolve(__dirname, '../../db/migrations/002_agent_ownership.sql'), 'utf8')
 const migration003 = readFileSync(resolve(__dirname, '../../db/migrations/003_external_agents.sql'), 'utf8')
+const migration013 = readFileSync(resolve(__dirname, '../../db/migrations/013_model_selection.sql'), 'utf8')
 
 let app, db, tenantId, userId, apiKeyId
 
@@ -46,6 +47,7 @@ beforeEach(async () => {
   db.exec(migration001)
   db.exec(migration002)
   db.exec(migration003)
+  db.exec(migration013)
 
   tenantId = nanoid()
   userId = nanoid()
@@ -85,7 +87,12 @@ afterEach(async () => {
   if (db) db.close()
 })
 
-function seedExternalAgent({ mode = 'observe', providerHint = 'openai' } = {}) {
+function seedExternalAgent({
+  mode = 'observe',
+  providerHint = 'openai',
+  modelOverride = null,
+  endpointUrl = null,
+} = {}) {
   const rawKey = `eudora-proxy-${nanoid(32)}`
   const { ciphertext, iv } = encrypt(rawKey)
   const agentId = nanoid()
@@ -94,9 +101,10 @@ function seedExternalAgent({ mode = 'observe', providerHint = 'openai' } = {}) {
     INSERT INTO agents (
       id, tenant_id, name, purpose, model_provider, api_key_id, owner_type,
       owner_id, owner_chain, agent_type, proxy_key_encrypted, proxy_key_iv,
-      proxy_key_prefix, provider_hint, interception_mode, status, created_at
+      proxy_key_prefix, provider_hint, interception_mode, model_override,
+      endpoint_url, status, created_at
     )
-    VALUES (?, ?, ?, ?, ?, ?, 'human', ?, '[]', 'external', ?, ?, ?, ?, ?, 'live', ?)
+    VALUES (?, ?, ?, ?, ?, ?, 'human', ?, '[]', 'external', ?, ?, ?, ?, ?, ?, ?, 'live', ?)
   `).run(
     agentId,
     tenantId,
@@ -110,6 +118,8 @@ function seedExternalAgent({ mode = 'observe', providerHint = 'openai' } = {}) {
     rawKey.substring(0, 24),
     providerHint,
     mode,
+    modelOverride,
+    endpointUrl,
     Date.now()
   )
 
@@ -155,6 +165,33 @@ describe('proxy routes', () => {
         }),
       })
     )
+  })
+
+  it('uses the external endpoint and agent model override and records the resolved model', async () => {
+    const { proxyKey } = seedExternalAgent({
+      modelOverride: 'gpt-4o-mini',
+      endpointUrl: 'https://gateway.example.com',
+    })
+
+    const res = await app.inject({
+      method: 'POST',
+      url: '/proxy/openai/v1/chat/completions',
+      headers: { authorization: `Bearer ${proxyKey}` },
+      payload: openAiPayload('Use the configured model'),
+    })
+
+    expect(res.statusCode).toBe(200)
+    expect(fetch).toHaveBeenCalledWith(
+      'https://gateway.example.com/v1/chat/completions',
+      expect.objectContaining({
+        body: expect.any(String),
+      })
+    )
+    const forwardedBody = JSON.parse(fetch.mock.calls[0][1].body)
+    expect(forwardedBody.model).toBe('gpt-4o-mini')
+
+    const audit = await waitForAuditAction('proxy_forwarded')
+    expect(audit.resolved_model).toBe('gpt-4o-mini')
   })
 
   it('POST /proxy/openai/v1/chat/completions with injection + block mode returns 400 and does not fetch', async () => {

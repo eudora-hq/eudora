@@ -14,6 +14,7 @@ import { record } from '../audit/traceRecorder.js'
 import { getHumanRoot } from '../utils/ownershipChain.js'
 import { createNotification } from '../utils/notify.js'
 import cronParser from 'cron-parser'
+import { resolveModel } from '../utils/resolveModel.js'
 
 const activeTasks = new Map()
 
@@ -66,6 +67,7 @@ async function runJob(jobId) {
   let content = ''
   let tokensUsed = { total: 0 }
   let riskScore = 0
+  let resolvedModel = null
 
   try {
     db = getDb()
@@ -98,6 +100,11 @@ async function runJob(jobId) {
       createCronFailureNotification(db, job, message)
       return
     }
+    const connection = agent.api_key_id
+      ? db.prepare('SELECT * FROM api_keys WHERE id = ? AND tenant_id = ?')
+        .get(agent.api_key_id, job.tenant_id)
+      : null
+    resolvedModel = resolveModel(agent, connection)
 
     const humanRootId = getHumanRoot(db, agent.id, job.tenant_id) || agent.owner_id
     const sanitiserResult = sanitise(job.prompt)
@@ -130,6 +137,7 @@ async function runJob(jobId) {
         prompt: job.prompt,
         response: content,
         riskScore,
+        resolvedModel,
         metadata: { cronJobId: job.id, agentId: agent.id, intent, violation: guardResult.violation },
         initiatedByUserId: humanRootId,
         agentChain: [agent.id],
@@ -148,9 +156,12 @@ async function runJob(jobId) {
     const composed = compose(agent.system_prompt || '', files, sanitiserResult.sanitised)
     contextFilesUsed = composed.contextFilesUsed
 
-    const relayResult = await relay(composed, agent.api_key_id, job.tenant_id)
+    const relayResult = agent.model_override
+      ? await relay(composed, agent.api_key_id, job.tenant_id, agent.model_override)
+      : await relay(composed, agent.api_key_id, job.tenant_id)
     content = relayResult.content
     tokensUsed = relayResult.tokensUsed || { total: 0 }
+    resolvedModel = relayResult.resolvedModel || resolvedModel
 
     const scopeResult = enforceScope(content, agent.purpose)
     riskScore = score(sanitiserResult, guardResult, scopeResult)
@@ -181,6 +192,7 @@ async function runJob(jobId) {
       prompt: job.prompt,
       response: content,
       riskScore,
+      resolvedModel,
       metadata: { cronJobId: job.id, agentId: agent.id, intent },
       initiatedByUserId: humanRootId,
       agentChain: [agent.id],
@@ -230,6 +242,7 @@ async function runJob(jobId) {
           prompt: job.prompt,
           response: errorMessage,
           riskScore,
+          resolvedModel,
           metadata: { cronJobId: job.id, agentId: agent?.id || job.agent_id, intent, error: errorMessage },
           initiatedByUserId: humanRootId,
           agentChain: agent?.id ? [agent.id] : [],

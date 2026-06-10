@@ -1,6 +1,7 @@
 import getDb from '../db/client.js'
 import { decrypt } from '../utils/encryption.js'
 import { refreshOAuthToken } from '../utils/oauthRefresh.js'
+import { resolveModel } from '../utils/resolveModel.js'
 
 export class InvalidApiKeyError extends Error {
   constructor(provider) {
@@ -33,12 +34,13 @@ function checkStatus(res, provider) {
   if (!res.ok) throw new Error(`Provider ${provider} returned HTTP ${res.status}`)
 }
 
-export async function relay(composedPrompt, apiKeyId, tenantId) {
+export async function relay(composedPrompt, apiKeyId, tenantId, modelOverride = null) {
   const db = getDb()
   const row = db.prepare('SELECT * FROM api_keys WHERE id = ?').get(apiKeyId)
   if (!row || row.tenant_id !== tenantId) throw new Error('API key not found or access denied')
 
   const { provider } = row
+  const configuredModel = resolveModel({ model_override: modelOverride }, row)
 
   // Resolve credential — scoped here, never stored beyond this function
   let activeRow = row
@@ -55,8 +57,10 @@ export async function relay(composedPrompt, apiKeyId, tenantId) {
 
   let content
   let tokensUsed
+  let resolvedModel
 
   if (provider === 'anthropic') {
+    resolvedModel = configuredModel || 'claude-sonnet-4-20250514'
     const res = await fetch('https://api.anthropic.com/v1/messages', {
       method: 'POST',
       headers: {
@@ -65,7 +69,7 @@ export async function relay(composedPrompt, apiKeyId, tenantId) {
         'content-type': 'application/json',
       },
       body: JSON.stringify({
-        model: 'claude-sonnet-4-20250514',
+        model: resolvedModel,
         max_tokens: 4096,
         system: composedPrompt.messages[0].content,
         messages: [{ role: 'user', content: composedPrompt.messages[1].content }],
@@ -81,6 +85,7 @@ export async function relay(composedPrompt, apiKeyId, tenantId) {
     }
 
   } else if (provider === 'openai' || provider === 'openai_oauth') {
+    resolvedModel = configuredModel || 'gpt-4o'
     const res = await fetch('https://api.openai.com/v1/chat/completions', {
       method: 'POST',
       headers: {
@@ -88,7 +93,7 @@ export async function relay(composedPrompt, apiKeyId, tenantId) {
         'content-type': 'application/json',
       },
       body: JSON.stringify({
-        model: 'gpt-4o',
+        model: resolvedModel,
         max_tokens: 4096,
         messages: composedPrompt.messages,
       }),
@@ -103,8 +108,9 @@ export async function relay(composedPrompt, apiKeyId, tenantId) {
     }
 
   } else if (provider === 'gemini') {
+    resolvedModel = configuredModel || 'gemini-2.0-flash'
     const res = await fetch(
-      `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${credential}`,
+      `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(resolvedModel)}:generateContent?key=${credential}`,
       {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
@@ -125,13 +131,14 @@ export async function relay(composedPrompt, apiKeyId, tenantId) {
     }
 
   } else if (provider === 'ollama') {
+    resolvedModel = configuredModel || activeRow.model_name || 'qwen2.5-coder:14b'
     const headers = { 'content-type': 'application/json' }
     if (credential) headers.Authorization = `Bearer ${credential}`
     const res = await fetch(`${activeRow.base_url}/api/chat`, {
       method: 'POST',
       headers,
       body: JSON.stringify({
-        model: activeRow.model_name || 'qwen2.5-coder:14b',
+        model: resolvedModel,
         stream: false,
         messages: composedPrompt.messages,
       }),
@@ -146,13 +153,14 @@ export async function relay(composedPrompt, apiKeyId, tenantId) {
     }
 
   } else if (provider === 'custom') {
+    resolvedModel = configuredModel || 'default'
     const headers = { 'content-type': 'application/json' }
     if (credential) headers.Authorization = `Bearer ${credential}`
     const res = await fetch(`${activeRow.base_url}/v1/chat/completions`, {
       method: 'POST',
       headers,
       body: JSON.stringify({
-        model: 'default',
+        model: resolvedModel,
         max_tokens: 4096,
         messages: composedPrompt.messages,
       }),
@@ -170,5 +178,5 @@ export async function relay(composedPrompt, apiKeyId, tenantId) {
     throw new Error(`Unsupported provider: ${provider}`)
   }
 
-  return { content, tokensUsed }
+  return { content, tokensUsed, resolvedModel }
 }

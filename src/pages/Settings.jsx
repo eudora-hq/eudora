@@ -24,6 +24,8 @@ export default function Settings() {
   const [label, setLabel] = useState('Primary model');
   const [apiKey, setApiKey] = useState('');
   const [baseUrl, setBaseUrl] = useState('');
+  const [defaultModel, setDefaultModel] = useState('');
+  const [ollamaModels, setOllamaModels] = useState([]);
   const [statuses, setStatuses] = useState({});
   const [profileName, setProfileName] = useState(user?.name || user?.email || '');
   const [showPassword, setShowPassword] = useState(false);
@@ -107,12 +109,17 @@ export default function Settings() {
       label,
       ...(needsBaseUrl ? { base_url: baseUrl } : {}),
       ...((!optionalKey || apiKey.trim()) ? { key: apiKey } : {}),
+      default_model: defaultModel.trim() || null,
     };
 
     try {
       const res = await api.post('/api-keys', payload);
       if (testOnly) {
         const testRes = await api.post('/api-keys/test', { id: res.data.id });
+        if (provider === 'ollama' && testRes.data.success) {
+          const models = await fetchOllamaModels(baseUrl);
+          if (models.length) setOllamaModels(models);
+        }
         await api.delete(`/api-keys/${res.data.id}`);
         if (!testRes.data.success) throw new Error(testRes.data.error || 'Connection failed');
         showStatus('new', { type: 'success', text: `PING: ${testRes.data.latencyMs}MS — VERIFIED` });
@@ -131,6 +138,8 @@ export default function Settings() {
     setLabel('Primary model');
     setApiKey('');
     setBaseUrl('');
+    setDefaultModel('');
+    setOllamaModels([]);
   };
 
   const saveProfile = async () => {
@@ -315,6 +324,7 @@ export default function Settings() {
                   {(key.provider === 'ollama' || key.provider === 'custom') && !key.has_key && <span className="font-mono text-[9px] text-text-muted uppercase">(No auth)</span>}
                 </div>
                 {key.base_url && <p className="font-mono text-[10px] text-text-muted truncate mt-1">{key.base_url}</p>}
+                {key.default_model && <p className="font-mono text-[9px] text-primary/70 uppercase tracking-widest mt-1">MODEL: {key.default_model}</p>}
                 {statuses[key.id] && (
                   <p className={`font-mono text-[10px] uppercase tracking-widest mt-2 ${statuses[key.id].type === 'success' ? 'text-primary' : statuses[key.id].type === 'error' ? 'text-danger' : 'text-warning'}`}>
                     {statuses[key.id].type === 'success' ? '✅ ' : statuses[key.id].type === 'error' ? '❌ ' : ''}{statuses[key.id].text}
@@ -335,7 +345,7 @@ export default function Settings() {
           <div className="mt-8 border border-[#262626] bg-[#050505] p-6 space-y-6 fade-in">
             <div className="grid grid-cols-5 gap-4">
               {PROVIDERS.map(item => (
-                <button key={item} onClick={() => { setProvider(item); setBaseUrl(item === 'ollama' ? 'http://localhost:11434' : ''); }} className={`border flex flex-col items-center justify-center p-6 gap-3 transition-colors ${provider === item ? 'border-primary bg-primary/10 text-primary' : 'border-[#262626] bg-[#0a0a0a] text-text-muted hover:border-text-muted'}`}>
+                <button key={item} onClick={() => { setProvider(item); setBaseUrl(item === 'ollama' ? 'http://localhost:11434' : ''); setDefaultModel(''); setOllamaModels([]); }} className={`border flex flex-col items-center justify-center p-6 gap-3 transition-colors ${provider === item ? 'border-primary bg-primary/10 text-primary' : 'border-[#262626] bg-[#0a0a0a] text-text-muted hover:border-text-muted'}`}>
                   <span className="material-symbols-outlined text-[24px]">vpn_key</span>
                   <span className="font-mono text-[10px] uppercase font-bold tracking-widest">{item}</span>
                 </button>
@@ -343,6 +353,14 @@ export default function Settings() {
             </div>
             <FormField label="Label" value={label} onChange={setLabel} />
             {needsBaseUrl && <FormField label="Base URL" value={baseUrl} onChange={setBaseUrl} placeholder={provider === 'ollama' ? 'http://localhost:11434' : 'https://model-gateway.example.com'} />}
+            <ModelField
+              provider={provider}
+              value={defaultModel}
+              onChange={setDefaultModel}
+              options={provider === 'ollama' ? ollamaModels : []}
+              label="DEFAULT_MODEL"
+              helper="Used by all agents on this connection unless overridden per-agent"
+            />
             <FormField label={optionalKey ? 'API Key (optional)' : 'API Key'} value={apiKey} onChange={setApiKey} type="password" placeholder="sk-..." />
             {statuses.new && (
               <p className={`font-mono text-[10px] uppercase tracking-widest ${statuses.new.type === 'success' ? 'text-primary' : 'text-danger'}`}>{statuses.new.type === 'success' ? '✅ ' : '❌ '}{statuses.new.text}</p>
@@ -651,6 +669,50 @@ function FormField({ label, value, onChange, type = 'text', placeholder = '' }) 
       <input type={type} value={value} onChange={(e) => onChange(e.target.value)} placeholder={placeholder} className="w-full bg-[#050505] border border-[#262626] text-white px-4 py-3 font-mono text-[13px] focus:border-primary" />
     </div>
   );
+}
+
+function ModelField({ provider, value, onChange, options = [], label, helper }) {
+  const placeholders = {
+    ollama: 'qwen2.5:14b',
+    openai: 'gpt-4o',
+    anthropic: 'claude-sonnet-4-20250514',
+    gemini: 'gemini-2.0-flash',
+    custom: 'deployment-name',
+    azure: 'deployment-name',
+  };
+  return (
+    <div className="space-y-2">
+      <label className="font-mono text-[10px] text-primary uppercase tracking-[0.15em] block">{label}</label>
+      {options.length ? (
+        <select value={value} onChange={(event) => onChange(event.target.value)}
+          className="w-full bg-[#050505] border border-[#262626] text-white px-4 py-3 font-mono text-[13px] focus:border-primary">
+          <option value="">NO DEFAULT MODEL</option>
+          {options.map(model => <option key={model} value={model}>{model}</option>)}
+        </select>
+      ) : (
+        <input value={value} onChange={(event) => onChange(event.target.value)}
+          placeholder={placeholders[provider] || 'deployment-name'}
+          className="w-full bg-[#050505] border border-[#262626] text-white px-4 py-3 font-mono text-[13px] focus:border-primary" />
+      )}
+      <p className="font-mono text-[9px] text-text-muted">{helper}</p>
+    </div>
+  );
+}
+
+async function fetchOllamaModels(baseUrl) {
+  if (!baseUrl) return [];
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 3000);
+  try {
+    const res = await fetch(`${baseUrl.replace(/\/+$/, '')}/api/tags`, { signal: controller.signal });
+    if (!res.ok) return [];
+    const data = await res.json();
+    return (data.models || []).map(model => model.name).filter(Boolean);
+  } catch {
+    return [];
+  } finally {
+    clearTimeout(timeout);
+  }
 }
 
 function UsageBar({ label, used, limit }) {

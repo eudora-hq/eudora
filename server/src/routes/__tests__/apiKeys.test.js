@@ -12,8 +12,16 @@ import { generateAccessToken } from '../../utils/auth.js'
 import apiKeysRoutes from '../apiKeys.js'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
-const migrationSql = readFileSync(
+const migration001 = readFileSync(
   resolve(__dirname, '../../db/migrations/001_initial_schema.sql'),
+  'utf8'
+)
+const migration002 = readFileSync(
+  resolve(__dirname, '../../db/migrations/002_agent_ownership.sql'),
+  'utf8'
+)
+const migration013 = readFileSync(
+  resolve(__dirname, '../../db/migrations/013_model_selection.sql'),
   'utf8'
 )
 
@@ -29,7 +37,9 @@ let tenantBId, userBId, tokenB
 beforeAll(async () => {
   db = new Database(':memory:')
   db.pragma('foreign_keys = ON')
-  db.exec(migrationSql)
+  db.exec(migration001)
+  db.exec(migration002)
+  db.exec(migration013)
 
   const insertTenant = db.prepare(
     'INSERT INTO tenants (id, name, plan, trial_ends_at, created_at) VALUES (?, ?, ?, ?, ?)'
@@ -110,6 +120,25 @@ describe('POST /api-keys', () => {
     expect(row.key_encrypted).toBeNull()
     expect(row.key_iv).toBeNull()
   })
+
+  it('stores and returns a default model', async () => {
+    const res = await req('POST', '/api-keys', {
+      token: tokenA,
+      payload: {
+        provider: 'ollama',
+        label: 'Modelled Ollama',
+        base_url: 'http://localhost:11434',
+        default_model: 'qwen2.5:14b',
+      },
+    })
+
+    expect(res.statusCode).toBe(201)
+    expect(JSON.parse(res.body).default_model).toBe('qwen2.5:14b')
+
+    const row = db.prepare('SELECT default_model FROM api_keys WHERE id = ?')
+      .get(JSON.parse(res.body).id)
+    expect(row.default_model).toBe('qwen2.5:14b')
+  })
 })
 
 describe('GET /api-keys', () => {
@@ -125,6 +154,49 @@ describe('GET /api-keys', () => {
       expect(row).not.toHaveProperty('oauth_access_token_encrypted')
       expect(row).not.toHaveProperty('oauth_refresh_token_encrypted')
     }
+  })
+
+  it('includes default_model in the safe response', async () => {
+    const createRes = await req('POST', '/api-keys', {
+      token: tokenA,
+      payload: {
+        provider: 'openai',
+        label: 'OpenAI Default',
+        key: 'sk-test-default',
+        default_model: 'gpt-4o',
+      },
+    })
+    const created = JSON.parse(createRes.body)
+
+    const res = await req('GET', '/api-keys', { token: tokenA })
+    const row = JSON.parse(res.body).find((key) => key.id === created.id)
+
+    expect(row.default_model).toBe('gpt-4o')
+  })
+})
+
+describe('PATCH /api-keys/:id', () => {
+  it('updates default_model', async () => {
+    const createRes = await req('POST', '/api-keys', {
+      token: tokenA,
+      payload: {
+        provider: 'anthropic',
+        label: 'Anthropic Default',
+        key: 'sk-ant-update',
+        default_model: 'claude-sonnet-4-20250514',
+      },
+    })
+    const created = JSON.parse(createRes.body)
+
+    const res = await req('PATCH', `/api-keys/${created.id}`, {
+      token: tokenA,
+      payload: { default_model: 'claude-opus-4-20250514' },
+    })
+
+    expect(res.statusCode).toBe(200)
+    expect(JSON.parse(res.body).default_model).toBe('claude-opus-4-20250514')
+    expect(db.prepare('SELECT default_model FROM api_keys WHERE id = ?').get(created.id).default_model)
+      .toBe('claude-opus-4-20250514')
   })
 })
 

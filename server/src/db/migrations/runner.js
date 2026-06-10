@@ -5,6 +5,17 @@ import getDb from '../client.js'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
 
+function skipExistingColumns(db, sql) {
+  return sql.replace(
+    /ALTER TABLE\s+([A-Za-z_][A-Za-z0-9_]*)\s+ADD COLUMN\s+([A-Za-z_][A-Za-z0-9_]*)\s+([^;]+);/gi,
+    (statement, table, column) => {
+      const exists = db.prepare(`PRAGMA table_info("${table}")`).all()
+        .some((entry) => entry.name === column)
+      return exists ? '' : statement
+    }
+  )
+}
+
 export function runMigrations(db) {
   db.exec(`
     CREATE TABLE IF NOT EXISTS _migrations (
@@ -27,7 +38,7 @@ export function runMigrations(db) {
       continue
     }
 
-    const sql = readFileSync(resolve(__dirname, file), 'utf8')
+    const sql = skipExistingColumns(db, readFileSync(resolve(__dirname, file), 'utf8'))
     db.transaction(() => {
       db.exec(sql)
       db.prepare('INSERT INTO _migrations (filename, applied_at) VALUES (?, ?)').run(file, Date.now())

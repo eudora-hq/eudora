@@ -30,6 +30,7 @@ export default function AgentBuilder() {
     systemPrompt: '',
     apiKeyId: '',
     modelProvider: '',
+    modelOverride: '',
     scopePolicy: JSON.stringify(DEFAULT_SCOPE_POLICY, null, 2),
   });
   const [formError, setFormError] = useState('');
@@ -41,6 +42,8 @@ export default function AgentBuilder() {
     name: '',
     purpose: '',
     providerHint: 'openai',
+    endpointUrl: '',
+    model: '',
     interceptionMode: 'observe',
   });
   const [externalError, setExternalError] = useState('');
@@ -51,6 +54,8 @@ export default function AgentBuilder() {
   const [externalOwnerType, setExternalOwnerType] = useState('human');
   const [externalOwnerAgentId, setExternalOwnerAgentId] = useState('');
   const [availableAgents, setAvailableAgents] = useState([]);
+  const [ollamaModels, setOllamaModels] = useState([]);
+  const selectedConnection = apiKeys.find((key) => key.id === reviewForm.apiKeyId);
 
   useEffect(() => {
     let isMounted = true;
@@ -121,6 +126,18 @@ export default function AgentBuilder() {
     };
   }, [ownerType, externalOwnerType]);
 
+  useEffect(() => {
+    let mounted = true;
+    setOllamaModels([]);
+    if (selectedConnection?.provider !== 'ollama' || !selectedConnection.base_url) {
+      return () => { mounted = false; };
+    }
+    fetchOllamaModels(selectedConnection.base_url).then(models => {
+      if (mounted) setOllamaModels(models);
+    });
+    return () => { mounted = false; };
+  }, [selectedConnection?.id, selectedConnection?.base_url, selectedConnection?.provider]);
+
   const handleDeploy = async () => {
     if (!cmdInput.trim()) return;
     const firstKey = apiKeys[0];
@@ -143,6 +160,7 @@ export default function AgentBuilder() {
         systemPrompt: res.data.systemPrompt || '',
         apiKeyId: firstKey.id,
         modelProvider: firstKey.provider,
+        modelOverride: '',
         scopePolicy: JSON.stringify(DEFAULT_SCOPE_POLICY, null, 2),
       });
       setFormMode('create');
@@ -178,6 +196,7 @@ export default function AgentBuilder() {
         model_provider: selectedKey?.provider || reviewForm.modelProvider,
         api_key_id: reviewForm.apiKeyId || null,
         system_prompt: reviewForm.systemPrompt,
+        model_override: reviewForm.modelOverride.trim() || null,
         owner_type: ownerType,
         owner_id: ownerType === 'human' ? currentUserId : ownerAgentId,
       });
@@ -206,6 +225,7 @@ export default function AgentBuilder() {
       systemPrompt: '',
       apiKeyId: apiKeys[0]?.id || '',
       modelProvider: apiKeys[0]?.provider || '',
+      modelOverride: '',
       scopePolicy: JSON.stringify(DEFAULT_SCOPE_POLICY, null, 2),
     });
   };
@@ -220,6 +240,8 @@ export default function AgentBuilder() {
       name: '',
       purpose: '',
       providerHint: 'openai',
+      endpointUrl: '',
+      model: '',
       interceptionMode: 'observe',
     });
   };
@@ -254,6 +276,8 @@ export default function AgentBuilder() {
         ownerType: externalOwnerType,
         ownerId: externalOwnerType === 'human' ? ownerId : externalOwnerAgentId,
         providerHint: externalForm.providerHint,
+        endpoint_url: externalForm.endpointUrl.trim() || null,
+        default_model: externalForm.model.trim() || null,
         interceptionMode: externalForm.interceptionMode,
       });
       const agentRes = await api.get(`/agents/${res.data.agentId}`);
@@ -293,6 +317,7 @@ export default function AgentBuilder() {
       systemPrompt: template.systemPrompt,
       apiKeyId: firstKey?.id || '',
       modelProvider: firstKey?.provider || '',
+      modelOverride: '',
       scopePolicy: JSON.stringify(DEFAULT_SCOPE_POLICY, null, 2),
     });
   };
@@ -307,6 +332,7 @@ export default function AgentBuilder() {
       systemPrompt: agent.systemPrompt || '',
       apiKeyId: agent.api_key_id || '',
       modelProvider: agent.provider || agent.model || '',
+      modelOverride: agent.model_override || '',
       scopePolicy: formatScopePolicy(agent.scope_policy),
     });
   };
@@ -325,6 +351,7 @@ export default function AgentBuilder() {
         model_provider: selectedKey?.provider || reviewForm.modelProvider,
         api_key_id: reviewForm.apiKeyId || null,
         system_prompt: reviewForm.systemPrompt,
+        model_override: reviewForm.modelOverride.trim() || null,
       });
       const scopeRes = await api.patch(`/agents/${editingAgentId}/scope-policy`, { scopePolicy });
       useAgentStore.getState().updateAgent(editingAgentId, normalizeAgent({
@@ -385,6 +412,7 @@ export default function AgentBuilder() {
       systemPrompt: '',
       apiKeyId: '',
       modelProvider: '',
+      modelOverride: '',
       scopePolicy: JSON.stringify(DEFAULT_SCOPE_POLICY, null, 2),
     });
   };
@@ -777,6 +805,34 @@ export default function AgentBuilder() {
                       </select>
                     </div>
                     <div className="space-y-2 col-span-2">
+                      <label className="font-mono text-[10px] text-primary uppercase tracking-[0.15em] block">MODEL_OVERRIDE</label>
+                      {selectedConnection?.provider === 'ollama' && ollamaModels.length ? (
+                        <select
+                          value={reviewForm.modelOverride}
+                          onChange={(event) => setReviewForm(form => ({ ...form, modelOverride: event.target.value }))}
+                          className="w-full bg-[#050505] border border-[#262626] text-white px-4 py-3 font-mono text-[13px] focus:border-primary appearance-none cursor-pointer"
+                        >
+                          <option value="">
+                            {selectedConnection.default_model
+                              ? `INHERITED FROM CONNECTION: ${selectedConnection.default_model}`
+                              : 'USE CONNECTION DEFAULT'}
+                          </option>
+                          {ollamaModels.map(model => <option key={model} value={model}>{model}</option>)}
+                        </select>
+                      ) : (
+                        <input
+                          type="text"
+                          value={reviewForm.modelOverride}
+                          onChange={(event) => setReviewForm(form => ({ ...form, modelOverride: event.target.value }))}
+                          placeholder={selectedConnection?.default_model
+                            ? `Inherited from connection: ${selectedConnection.default_model}`
+                            : 'Optional model override'}
+                          className="w-full bg-[#050505] border border-[#262626] text-white px-4 py-3 font-mono text-[13px] focus:border-primary"
+                        />
+                      )}
+                      <p className="font-mono text-[9px] text-text-muted">Leave blank to use the connection&apos;s default model</p>
+                    </div>
+                    <div className="space-y-2 col-span-2">
                       <label className="font-mono text-[10px] text-primary uppercase tracking-[0.15em] block">AGENT_MISSION</label>
                       <input
                         type="text"
@@ -901,6 +957,28 @@ export default function AgentBuilder() {
                     </select>
                   </div>
                   <div className="space-y-2 col-span-2">
+                    <label className="font-mono text-[10px] text-primary uppercase tracking-[0.15em] block">ENDPOINT_URL</label>
+                    <input
+                      type="url"
+                      value={externalForm.endpointUrl}
+                      onChange={(event) => setExternalForm(form => ({ ...form, endpointUrl: event.target.value }))}
+                      placeholder="https://api.openai.com or http://192.168.178.100:11434"
+                      className="w-full bg-[#050505] border border-[#262626] text-white px-4 py-3 font-mono text-[13px] focus:border-primary"
+                    />
+                    <p className="font-mono text-[9px] text-text-muted">Where Eudora should forward proxy requests for this agent. Leave blank to use Eudora&apos;s built-in provider routing.</p>
+                  </div>
+                  <div className="space-y-2 col-span-2">
+                    <label className="font-mono text-[10px] text-primary uppercase tracking-[0.15em] block">MODEL</label>
+                    <input
+                      type="text"
+                      value={externalForm.model}
+                      onChange={(event) => setExternalForm(form => ({ ...form, model: event.target.value }))}
+                      placeholder="gpt-4o-mini"
+                      className="w-full bg-[#050505] border border-[#262626] text-white px-4 py-3 font-mono text-[13px] focus:border-primary"
+                    />
+                    <p className="font-mono text-[9px] text-text-muted">The model this agent uses. Recorded in audit logs.</p>
+                  </div>
+                  <div className="space-y-2 col-span-2">
                     <label className="font-mono text-[10px] text-primary uppercase tracking-[0.15em] block">PURPOSE_DESCRIPTION</label>
                     <textarea
                       rows={4}
@@ -984,7 +1062,7 @@ function normalizeAgent(agent) {
     ...agent,
     refId: `AGENT_${agent.id}`,
     mission: agent.purpose,
-    model: agent.provider_hint || agent.model_provider,
+    model: agent.model_override || agent.provider_hint || agent.model_provider,
     created_at: agent.created_at,
     level: '1',
     knowledge: 'Base_Vectors',
@@ -993,6 +1071,21 @@ function normalizeAgent(agent) {
     agentType: agent.agent_type || 'internal',
     systemPrompt: agent.system_prompt,
   };
+}
+
+async function fetchOllamaModels(baseUrl) {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 3000);
+  try {
+    const res = await fetch(`${baseUrl.replace(/\/+$/, '')}/api/tags`, { signal: controller.signal });
+    if (!res.ok) return [];
+    const data = await res.json();
+    return (data.models || []).map(model => model.name).filter(Boolean);
+  } catch {
+    return [];
+  } finally {
+    clearTimeout(timeout);
+  }
 }
 
 function withOwnerDisplay(agent, ownerType, ownerAgentId, availableAgents, user) {

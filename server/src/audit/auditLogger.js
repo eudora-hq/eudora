@@ -25,11 +25,15 @@ export function log(entry, db) {
   setImmediate(() => {
     try {
       const _db = db ?? getDb()
-      _db.prepare(`
-        INSERT INTO audit_log
-          (id, tenant_id, user_id, action, context_hash, prompt_hash, response_hash, risk_score, metadata, initiated_by_user_id, agent_chain, ts)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-      `).run(
+      const hasResolvedModel = _db.prepare('PRAGMA table_info(audit_log)')
+        .all()
+        .some(column => column.name === 'resolved_model')
+      const columns = [
+        'id', 'tenant_id', 'user_id', 'action', 'context_hash', 'prompt_hash',
+        'response_hash', 'risk_score', 'metadata', 'initiated_by_user_id',
+        'agent_chain', ...(hasResolvedModel ? ['resolved_model'] : []), 'ts',
+      ]
+      const values = [
         nanoid(),
         entry.tenantId,
         entry.userId,
@@ -41,8 +45,13 @@ export function log(entry, db) {
         JSON.stringify(entry.metadata || {}),
         entry.initiatedByUserId || null,
         JSON.stringify(entry.agentChain || []),
+        ...(hasResolvedModel ? [entry.resolvedModel || null] : []),
         Date.now()
-      )
+      ]
+      _db.prepare(`
+        INSERT INTO audit_log (${columns.join(', ')})
+        VALUES (${columns.map(() => '?').join(', ')})
+      `).run(...values)
     } catch (err) {
       console.warn('[auditLogger] insert failed:', err.message)
     }

@@ -16,6 +16,7 @@ import { score } from '../security/riskScorer.js'
 import { log, AUDIT_ACTIONS } from '../audit/auditLogger.js'
 import { record } from '../audit/traceRecorder.js'
 import { createNotification } from '../utils/notify.js'
+import { resolveModel } from '../utils/resolveModel.js'
 
 export default async function chatRoutes(fastify) {
   const db = fastify.db
@@ -38,6 +39,11 @@ export default async function chatRoutes(fastify) {
         message: `Agent status is '${agent.status}'. Agent must be approved before use.`,
       })
     }
+    const connection = agent.api_key_id
+      ? db.prepare('SELECT * FROM api_keys WHERE id = ? AND tenant_id = ?')
+        .get(agent.api_key_id, request.tenantId)
+      : null
+    const configuredModel = resolveModel(agent, connection)
 
     if (!isUnderLimit(db, request.tenantId, request.tenant.plan, 'messages_per_day')) {
       return reply.code(429).send({ error: 'daily_limit_reached', upgradeUrl: '/billing' })
@@ -92,6 +98,7 @@ export default async function chatRoutes(fastify) {
           action: AUDIT_ACTIONS.GUARD_BLOCK,
           prompt: message,
           riskScore,
+          resolvedModel: configuredModel,
           metadata: { violation: guardResult.violation, agentId },
         })
         record({
@@ -128,7 +135,9 @@ export default async function chatRoutes(fastify) {
       }
 
       // Step 6 — Relay
-      const { content, tokensUsed } = await relay(composed, agent.api_key_id, request.tenantId)
+      const { content, tokensUsed, resolvedModel } = agent.model_override
+        ? await relay(composed, agent.api_key_id, request.tenantId, agent.model_override)
+        : await relay(composed, agent.api_key_id, request.tenantId)
 
       // Step 7 — Scope check
       const scopeResult = enforceScope(content, agent.purpose)
@@ -158,6 +167,7 @@ export default async function chatRoutes(fastify) {
         response: content,
         context: composed.messages[0].content,
         riskScore,
+        resolvedModel,
         metadata: {
           agentId,
           conversationId,
@@ -177,6 +187,7 @@ export default async function chatRoutes(fastify) {
           action: AUDIT_ACTIONS.INJECTION_DETECTED,
           prompt: message,
           riskScore,
+          resolvedModel,
           metadata: { patterns: sanitiserResult.patterns, agentId },
         })
       }
@@ -190,6 +201,7 @@ export default async function chatRoutes(fastify) {
           action: AUDIT_ACTIONS.SCOPE_VIOLATION,
           response: content,
           riskScore,
+          resolvedModel,
           metadata: { violation: scopeResult.violation, agentId },
         })
       }

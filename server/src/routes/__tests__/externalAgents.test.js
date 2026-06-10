@@ -82,6 +82,7 @@ const __dirname = dirname(fileURLToPath(import.meta.url))
 const migration001 = readFileSync(resolve(__dirname, '../../db/migrations/001_initial_schema.sql'), 'utf8')
 const migration002 = readFileSync(resolve(__dirname, '../../db/migrations/002_agent_ownership.sql'), 'utf8')
 const migration003 = readFileSync(resolve(__dirname, '../../db/migrations/003_external_agents.sql'), 'utf8')
+const migration013 = readFileSync(resolve(__dirname, '../../db/migrations/013_model_selection.sql'), 'utf8')
 
 let app, db, tenantId, userId, apiKeyId, token
 
@@ -91,6 +92,7 @@ beforeEach(async () => {
   db.exec(migration001)
   db.exec(migration002)
   db.exec(migration003)
+  db.exec(migration013)
 
   tenantId = nanoid()
   userId = nanoid()
@@ -159,7 +161,10 @@ async function registerExternalAgent(overrides = {}) {
 
 describe('external agent registration', () => {
   it('POST /agents/register with valid data returns proxy key once', async () => {
-    const { res, body } = await registerExternalAgent()
+    const { res, body } = await registerExternalAgent({
+      endpoint_url: 'https://api.openai.com',
+      default_model: 'gpt-4o-mini',
+    })
 
     expect(res.statusCode).toBe(201)
     expect(body.proxyKey).toMatch(/^eudora-proxy-/)
@@ -170,6 +175,8 @@ describe('external agent registration', () => {
     expect(row.proxy_key_encrypted).toBeTruthy()
     expect(row.proxy_key_iv).toBeTruthy()
     expect(row.proxy_key_encrypted).not.toBe(body.proxyKey)
+    expect(row.endpoint_url).toBe('https://api.openai.com')
+    expect(row.model_override).toBe('gpt-4o-mini')
 
     const getRes = await request('GET', `/agents/${body.agentId}`)
     const agent = JSON.parse(getRes.body)
@@ -178,6 +185,8 @@ describe('external agent registration', () => {
     expect(agent.proxyKey).toBeUndefined()
     expect(agent.proxy_key_encrypted).toBeUndefined()
     expect(agent.proxy_key_iv).toBeUndefined()
+    expect(agent.endpoint_url).toBe('https://api.openai.com')
+    expect(agent.model_override).toBe('gpt-4o-mini')
   })
 
   it('POST /agents/register without required fields returns 400', async () => {
@@ -205,7 +214,10 @@ describe('external agent registration', () => {
   })
 
   it('GET /agents includes external agents without proxy secrets', async () => {
-    const { body } = await registerExternalAgent()
+    const { body } = await registerExternalAgent({
+      endpoint_url: 'http://192.168.178.100:11434',
+      default_model: 'qwen2.5:14b',
+    })
     const res = await request('GET', '/agents')
     const agents = JSON.parse(res.body)
 
@@ -219,6 +231,8 @@ describe('external agent registration', () => {
     expect(external.proxy_key_encrypted).toBeUndefined()
     expect(external.proxy_key_iv).toBeUndefined()
     expect(external.proxyKey).toBeUndefined()
+    expect(external.endpoint_url).toBe('http://192.168.178.100:11434')
+    expect(external.model_override).toBe('qwen2.5:14b')
   })
 
   it('external agent with live status is accessible in chat', async () => {
