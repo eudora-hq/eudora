@@ -18,21 +18,50 @@ export default function Sidebar() {
     navigate('/login');
   };
 
-  const navItems = [
-    { id: 'dashboard', icon: 'grid_view', label: 'COMMAND CENTER', path: '/dashboard' },
-    { id: 'analytics', icon: 'analytics', label: 'ANALYTICS', path: '/analytics' },
-    { id: 'agents', icon: 'smart_toy', label: 'AGENT FLEET', path: '/agents' },
-    { id: 'templates', icon: 'grid_view', label: 'TEMPLATES', path: '/templates' },
-    { id: 'chat', icon: 'chat', label: 'NEURAL INTERFACE', path: '/chat' },
-    { id: 'workflows', icon: 'account_tree', label: 'WORKFLOWS', path: '/workflows' },
-    { id: 'approvals', icon: 'shield_person', label: 'APPROVALS', path: '/approvals' },
-    { id: 'audit', icon: 'receipt_long', label: 'NEXUS AUDIT', path: '/audit' },
-    { id: 'cron', icon: 'calendar_today', label: 'SCHEDULED JOBS', path: '/cron' },
-    { id: 'integrations', icon: 'hub', label: 'INTEGRATIONS', path: '/integrations' },
-    ...((plan === 'professional' || plan === 'enterprise' || isSelfHosted)
-      ? [{ id: 'team', icon: 'group', label: 'TEAM', path: '/team' }]
-      : []),
-    { id: 'settings', icon: 'settings', label: 'SETTINGS', path: '/settings' },
+  const hasProfessionalFeatures = plan === 'professional' || plan === 'enterprise' || isSelfHosted;
+  const navGroups = [
+    {
+      header: null,
+      items: [
+        { id: 'dashboard', icon: 'grid_view', label: 'COMMAND CENTER', path: '/dashboard' },
+        { id: 'analytics', icon: 'analytics', label: 'ANALYTICS', path: '/analytics' },
+      ],
+    },
+    {
+      header: 'AGENTS',
+      items: [
+        { id: 'agents', icon: 'smart_toy', label: 'AGENT FLEET', path: '/agents' },
+        { id: 'templates', icon: 'grid_view', label: 'TEMPLATES', path: '/templates' },
+        { id: 'chat', icon: 'chat', label: 'NEURAL INTERFACE', path: '/chat' },
+        { id: 'approvals', icon: 'shield_person', label: 'APPROVALS', path: '/approvals' },
+      ],
+    },
+    {
+      header: 'COMPLIANCE',
+      items: [
+        ...(hasProfessionalFeatures
+          ? [{ id: 'compliance', icon: 'verified', label: 'COMPLIANCE', path: '/compliance' }]
+          : []),
+        { id: 'audit', icon: 'receipt_long', label: 'NEXUS AUDIT', path: '/audit' },
+        { id: 'integrations', icon: 'hub', label: 'INTEGRATIONS', path: '/integrations' },
+      ],
+    },
+    {
+      header: 'WORKFLOWS',
+      items: [
+        { id: 'workflows', icon: 'account_tree', label: 'WORKFLOWS', path: '/workflows' },
+        { id: 'cron', icon: 'calendar_today', label: 'SCHEDULED JOBS', path: '/cron' },
+      ],
+    },
+    {
+      header: 'ACCOUNT',
+      items: [
+        ...(hasProfessionalFeatures
+          ? [{ id: 'team', icon: 'group', label: 'TEAM', path: '/team' }]
+          : []),
+        { id: 'settings', icon: 'settings', label: 'SETTINGS', path: '/settings' },
+      ],
+    },
   ];
 
   return (
@@ -48,39 +77,50 @@ export default function Sidebar() {
 
       {/* Navigation */}
       <nav className="flex-1 py-4 overflow-y-auto min-h-0">
-        <div className="space-y-1">
-          {navItems.map((item) => {
-            const link = (
-              <NavLink
-                key={item.id}
-                to={item.path}
-                className={({ isActive }) => `w-full flex items-center gap-3 px-6 py-3 transition-all ${
-                  isActive 
-                    ? 'bg-primary/10 text-primary border-r-2 border-primary' 
-                    : 'text-text-muted hover:text-white hover:bg-white/5'
-                }`}
-              >
-                <span className="material-symbols-outlined text-[18px]">{item.icon}</span>
-                <span className="font-mono text-[10px] tracking-[0.15em] uppercase">{item.label}</span>
-              </NavLink>
-            );
+        {navGroups.map((group, groupIndex) => (
+          <div key={group.header || 'primary'}>
+            {group.header && (
+              <div className="font-mono text-[8px] text-text-muted uppercase tracking-[0.2em] px-6 py-2 mt-4">
+                {group.header}
+              </div>
+            )}
+            <div className="space-y-1">
+              {group.items.map((item) => {
+                const link = (
+                  <NavLink
+                    key={item.id}
+                    to={item.path}
+                    className={({ isActive }) => `w-full flex items-center gap-3 px-6 py-3 transition-all ${
+                      isActive
+                        ? 'bg-primary/10 text-primary border-r-2 border-primary'
+                        : 'text-text-muted hover:text-white hover:bg-white/5'
+                    }`}
+                  >
+                    <span className="material-symbols-outlined text-[18px]">{item.icon}</span>
+                    <span className="font-mono text-[10px] tracking-[0.15em] uppercase">{item.label}</span>
+                  </NavLink>
+                );
 
-            return item.id === 'workflows' ? (
-              <TierGate key={item.id} feature="workflow_builder" message="Available on Professional and Enterprise plans">
-                {link}
-              </TierGate>
-            ) : link;
-          })}
-        </div>
+                return item.id === 'workflows' ? (
+                  <TierGate key={item.id} feature="workflow_builder" message="Available on Professional and Enterprise plans">
+                    {link}
+                  </TierGate>
+                ) : link;
+              })}
+            </div>
 
-        <div className="mt-8 px-6">
-          <button 
-            onClick={() => navigate('/agents')}
-            className="w-full bg-primary text-[#050505] py-2 font-mono text-[10px] uppercase font-bold tracking-widest active:scale-[0.98] transition-transform"
-          >
-            DEPLOY AGENT
-          </button>
-        </div>
+            {groupIndex === 1 && (
+              <div className="mt-4 px-6">
+                <button
+                  onClick={() => navigate('/agents')}
+                  className="w-full bg-primary text-[#050505] py-2 font-mono text-[10px] uppercase font-bold tracking-widest active:scale-[0.98] transition-transform"
+                >
+                  DEPLOY AGENT
+                </button>
+              </div>
+            )}
+          </div>
+        ))}
       </nav>
 
       {/* Plan Badge */}
