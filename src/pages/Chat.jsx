@@ -17,7 +17,9 @@ export default function Chat() {
 
   const messagesEndRef = useRef(null);
 
-  const currentAgent = useAgentStore.getState().activeAgent || agents[0] || null;
+  const internalAgents = agents.filter(agent => agent.agent_type !== 'external' && agent.agentType !== 'external');
+  const storedActiveAgent = useAgentStore.getState().activeAgent;
+  const currentAgent = internalAgents.find(agent => agent.id === storedActiveAgent?.id) || internalAgents[0] || null;
 
   useEffect(() => {
     let isMounted = true;
@@ -31,7 +33,9 @@ export default function Chat() {
 
         if (!isMounted) return;
 
-        const normalizedAgents = agentsRes.data.map(normalizeAgent);
+        const normalizedAgents = agentsRes.data
+          .filter(agent => agent.agent_type !== 'external')
+          .map(normalizeAgent);
         useAgentStore.getState().setAgents(normalizedAgents);
 
         const selectedAgent = normalizedAgents.find(agent => agent.id === activeAgent?.id) || normalizedAgents[0] || null;
@@ -282,7 +286,7 @@ export default function Chat() {
                onChange={(e) => handleAgentChange(e.target.value)}
                className="bg-transparent font-mono text-[14px] font-bold text-white uppercase focus:outline-none cursor-pointer"
              >
-               {agents.map(agent => (
+               {internalAgents.map(agent => (
                  <option key={agent.id} value={agent.id}>{agent.name}</option>
                ))}
              </select>

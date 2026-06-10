@@ -235,14 +235,17 @@ describe('external agent registration', () => {
     expect(external.model_override).toBe('qwen2.5:14b')
   })
 
-  it('external agent with live status is accessible in chat', async () => {
+  it('external agent with live status is rejected by Neural Interface chat', async () => {
     const { body } = await registerExternalAgent()
     const res = await request('POST', '/chat', {
       agentId: body.agentId,
       message: 'Hello from outside Eudora',
     })
 
-    expect(res.statusCode).toBe(200)
-    expect(JSON.parse(res.body).content).toBe('External agent response')
+    expect(res.statusCode).toBe(400)
+    expect(JSON.parse(res.body)).toEqual({
+      error: 'external_agent_not_supported',
+      message: 'External agents cannot be used via the Neural Interface. Use the proxy endpoint or SDK instead.',
+    })
   })
 })

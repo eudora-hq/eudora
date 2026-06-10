@@ -417,6 +417,35 @@ function ensureSpace(doc, minimumY = 700) {
   if (doc.y > minimumY) doc.addPage()
 }
 
+function renderTimestampSection(doc, timestamp = {}) {
+  sectionTitle(doc, 'RFC 3161 TIMESTAMP')
+  doc.font('Helvetica').fontSize(11).fillColor('#111111')
+
+  if (timestamp.status === 'ok') {
+    doc.text('Status:     VERIFIED ✓', 40, doc.y, { width: 515 })
+    doc.text(`Time:       ${timestamp.time || 'Unknown'}`, 40, doc.y, { width: 515 })
+    doc.text(`Authority:  ${timestamp.tsa || TSA_URL}`, 40, doc.y, { width: 515 })
+    doc.text('Standard:   RFC 3161 — Trusted Timestamp Protocol', 40, doc.y, { width: 515 })
+    doc.moveDown(1)
+    doc.text(
+      'Note: This timestamp provides cryptographic proof this report existed at the stated time, issued by a trusted third-party authority.',
+      40,
+      doc.y,
+      { width: 515 }
+    )
+    return
+  }
+
+  doc.text('Status:     UNAVAILABLE', 40, doc.y, { width: 515 })
+  doc.moveDown(1)
+  doc.text(
+    'Note: Timestamp authority was unreachable at report generation time. Report hash integrity is still guaranteed by the Eudora signature.',
+    40,
+    doc.y,
+    { width: 515 }
+  )
+}
+
 function renderPdf(data, reportHash) {
   if (data.reportMode === 'article50') {
     return renderArticle50Pdf(data, reportHash)
@@ -588,6 +617,8 @@ function renderPdf(data, reportHash) {
     doc.moveDown(1)
     doc.text('Compliant with DORA Article 11 operational resilience requirements', 40, doc.y, { width: 515 })
 
+    renderTimestampSection(doc, data.timestamp)
+
     doc.end()
   })
 }
@@ -692,6 +723,8 @@ function renderArticle50Pdf(data, reportHash) {
       { width: 515 }
     )
 
+    renderTimestampSection(doc, data.timestamp)
+
     doc.end()
   })
 }
@@ -699,21 +732,45 @@ function renderArticle50Pdf(data, reportHash) {
 export async function generateComplianceReport(db, options) {
   const data = collectReportData(db, options)
   const reportHash = hashReportData(data)
-  const signedPdfBuffer = await renderPdf(data, reportHash)
-  let pdfBuffer = signedPdfBuffer
+  const preliminaryPdfBuffer = await renderPdf(data, reportHash)
+  let pdfBuffer
   let timestampToken = null
   let timestampStatus = 'unavailable'
   let timestampTime = null
 
   try {
-    const token = await requestTimestamp(signedPdfBuffer)
+    // First pass obtains the TSA-issued time needed for the visible PDF section.
+    const preliminaryToken = await requestTimestamp(preliminaryPdfBuffer)
+    const preliminaryVerification = await verifyTimestamp(preliminaryPdfBuffer, preliminaryToken)
+    if (!preliminaryVerification.valid) {
+      throw new Error('Timestamp response failed message imprint verification')
+    }
+
+    data.timestamp = {
+      status: 'ok',
+      time: preliminaryVerification.timestamp,
+      tsa: preliminaryVerification.tsa || TSA_URL,
+    }
+    const timestampedContent = await renderPdf(data, reportHash)
+
+    // Timestamp the final rendered content so verification covers the visible section.
+    const token = await requestTimestamp(timestampedContent)
+    const verification = await verifyTimestamp(timestampedContent, token)
+    if (!verification.valid) {
+      throw new Error('Final timestamp response failed message imprint verification')
+    }
     timestampToken = token.toString('base64')
-    const verification = await verifyTimestamp(signedPdfBuffer, token)
     timestampTime = verification.timestamp
-    timestampStatus = verification.valid ? 'ok' : 'failed'
-    pdfBuffer = embedTimestampMetadata(signedPdfBuffer, token)
+    timestampStatus = 'ok'
+    pdfBuffer = embedTimestampMetadata(timestampedContent, token)
   } catch (error) {
     console.error('[compliance-report] RFC 3161 timestamp unavailable:', error.message)
+    data.timestamp = {
+      status: 'unavailable',
+      time: null,
+      tsa: TSA_URL,
+    }
+    pdfBuffer = await renderPdf(data, reportHash)
   }
 
   return {

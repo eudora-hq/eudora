@@ -33,6 +33,12 @@ export default async function chatRoutes(fastify) {
       .prepare('SELECT * FROM agents WHERE id = ? AND tenant_id = ?')
       .get(agentId, request.tenantId)
     if (!agent) return reply.code(404).send({ error: 'agent_not_found' })
+    if (agent.agent_type === 'external') {
+      return reply.code(400).send({
+        error: 'external_agent_not_supported',
+        message: 'External agents cannot be used via the Neural Interface. Use the proxy endpoint or SDK instead.',
+      })
+    }
     if (agent.status && agent.status !== 'live') {
       return reply.code(403).send({
         error: 'agent_not_live',
@@ -135,9 +141,7 @@ export default async function chatRoutes(fastify) {
       }
 
       // Step 6 — Relay
-      const { content, tokensUsed, resolvedModel } = agent.model_override
-        ? await relay(composed, agent.api_key_id, request.tenantId, agent.model_override)
-        : await relay(composed, agent.api_key_id, request.tenantId)
+      const { content, tokensUsed, resolvedModel } = await relay(composed, agent.api_key_id, request.tenantId, configuredModel)
 
       // Step 7 — Scope check
       const scopeResult = enforceScope(content, agent.purpose)
@@ -248,6 +252,7 @@ export default async function chatRoutes(fastify) {
           message: 'The AI provider is currently unavailable. Please try again later.',
         })
       }
+      console.error('[chat] unhandled error:', err.message, err.stack)
       return reply.code(500).send({ error: 'internal_error' })
     }
   })
