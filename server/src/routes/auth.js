@@ -1,3 +1,4 @@
+import { adaptDatabase } from '../db/index.js'
 import { nanoid } from 'nanoid'
 import { randomBytes } from 'crypto'
 import { generateSecret, generateURI, verify } from 'otplib'
@@ -23,7 +24,7 @@ function isValidEmail(email) {
 }
 
 async function hasColumn(db, table, column) {
-  const columns = await db.all(`PRAGMA table_info(${table})`)
+  const columns = await db.columns(table)
   return columns.some((item) => item.name === column)
 }
 
@@ -60,8 +61,8 @@ async function findOrCreateOAuthUser({ email, name, provider, providerId, db }) 
     const now = Date.now()
     const displayName = name?.trim() || normalisedEmail.split('@')[0]
 
-    db.transaction(() => {
-      await db.query(`
+    await db.transaction(async tx => {
+      await tx.query(`
         INSERT INTO tenants (id, name, plan, trial_ends_at, created_at)
         VALUES (?, ?, 'trial', ?, ?)
       `, [tenantId,
@@ -69,24 +70,24 @@ async function findOrCreateOAuthUser({ email, name, provider, providerId, db }) 
         now + 14 * 24 * 60 * 60 * 1000,
         now])
 
-      if (hasColumn(db, 'users', 'name')) {
-        await db.query(`
+      if (await hasColumn(tx, 'users', 'name')) {
+        await tx.query(`
           INSERT INTO users (
             id, tenant_id, email, name, password_hash, role, onboarding_completed
           )
           VALUES (?, ?, ?, ?, '', 'owner', 0)
         `, [userId, tenantId, normalisedEmail, displayName])
       } else {
-        await db.query(`
+        await tx.query(`
           INSERT INTO users (
             id, tenant_id, email, password_hash, role, onboarding_completed
           )
           VALUES (?, ?, ?, '', 'owner', 0)
         `, [userId, tenantId, normalisedEmail])
       }
-    })()
+    })
 
-    seedFeatureFlags(db, tenantId, 'trial')
+    await seedFeatureFlags(db, tenantId, 'trial')
     sendWelcomeEmail({ to: normalisedEmail, name: displayName }).catch((error) => {
       console.error('[email] Welcome email failed:', error.message)
     })
@@ -117,7 +118,7 @@ async function findOrCreateOAuthUser({ email, name, provider, providerId, db }) 
 }
 
 export default async function authRoutes(fastify) {
-  const db = fastify.db
+  const db = adaptDatabase(fastify.db)
 
   fastify.post('/auth/register', async (request, reply) => {
     const { name, email, password } = request.body || {}
@@ -144,7 +145,7 @@ export default async function authRoutes(fastify) {
 
     const passwordHash = await hashPassword(password)
     const userId = nanoid()
-    if (hasColumn(db, 'users', 'name')) {
+    if (await hasColumn(db, 'users', 'name')) {
       await db.query(
         'INSERT INTO users (id, tenant_id, email, name, password_hash, role, onboarding_completed) VALUES (?, ?, ?, ?, ?, ?, ?)'
       , [userId, tenantId, email.toLowerCase(), name.trim(), passwordHash, 'owner', 0])
@@ -154,7 +155,7 @@ export default async function authRoutes(fastify) {
       , [userId, tenantId, email.toLowerCase(), passwordHash, 'owner', 0])
     }
 
-    seedFeatureFlags(db, tenantId, 'trial')
+    await seedFeatureFlags(db, tenantId, 'trial')
     sendWelcomeEmail({ to: email, name }).catch((err) => {
       console.error('[email] Welcome email failed:', err.message)
     })
@@ -426,9 +427,7 @@ export default async function authRoutes(fastify) {
       })
     }
 
-    const existing = db
-      .prepare('SELECT id FROM users WHERE LOWER(email) = LOWER(?)')
-      .get(invite.email)
+    const existing = await db.get('SELECT id FROM users WHERE LOWER(email) = LOWER(?)', [invite.email])
     if (existing) {
       return reply.code(409).send({
         error: 'email_taken',
@@ -441,8 +440,8 @@ export default async function authRoutes(fastify) {
     const now = Date.now()
     const { raw, hashed } = generateRefreshToken()
 
-    db.transaction(() => {
-      await db.query(`
+    await db.transaction(async tx => {
+      await tx.query(`
         INSERT INTO users (
           id, tenant_id, email, name, password_hash, role, onboarding_completed
         )
@@ -454,19 +453,17 @@ export default async function authRoutes(fastify) {
         passwordHash,
         invite.role])
 
-      await db.query('UPDATE invites SET status = ?, accepted_at = ? WHERE id = ?', ['accepted', now, invite.id])
+      await tx.query('UPDATE invites SET status = ?, accepted_at = ? WHERE id = ?', ['accepted', now, invite.id])
 
-      await db.query(`
+      await tx.query(`
         INSERT INTO refresh_tokens (
           id, user_id, token_hash, expires_at, created_at
         )
         VALUES (?, ?, ?, ?, ?)
       `, [nanoid(), userId, hashed, now + 30 * 24 * 60 * 60 * 1000, now])
-    })()
+    })
 
-    const tenant = db
-      .prepare('SELECT plan, trial_ends_at FROM tenants WHERE id = ?')
-      .get(invite.tenant_id)
+    const tenant = await db.get('SELECT plan, trial_ends_at FROM tenants WHERE id = ?', [invite.tenant_id])
     const accessToken = generateAccessToken({
       userId,
       tenantId: invite.tenant_id,
@@ -694,7 +691,7 @@ export default async function authRoutes(fastify) {
     }
     if (typeof name === 'string' && name.trim()) {
       await db.query('UPDATE tenants SET name = ? WHERE id = ?', [name.trim(), request.tenantId])
-      if (hasColumn(db, 'users', 'name')) {
+      if (await hasColumn(db, 'users', 'name')) {
         await db.query('UPDATE users SET name = ? WHERE id = ?', [name.trim(), userId])
       }
     }
@@ -768,14 +765,10 @@ export default async function authRoutes(fastify) {
     const { ciphertext: refreshCt, iv: refreshIv } = encrypt(refresh_token)
     const oauthExpiresAt = Date.now() + expires_in * 1000
 
-    const owner = db
-      .prepare("SELECT id FROM users WHERE tenant_id = ? AND role = 'owner' LIMIT 1")
-      .get(tenantId)
+    const owner = await db.get("SELECT id FROM users WHERE tenant_id = ? AND role = 'owner' LIMIT 1", [tenantId])
     const userId = owner?.id ?? null
 
-    const existing = db
-      .prepare("SELECT id FROM api_keys WHERE tenant_id = ? AND provider = 'openai_oauth' LIMIT 1")
-      .get(tenantId)
+    const existing = await db.get("SELECT id FROM api_keys WHERE tenant_id = ? AND provider = 'openai_oauth' LIMIT 1", [tenantId])
 
     if (existing) {
       await db.query(`

@@ -1,3 +1,4 @@
+import { adaptDatabase } from '../db/index.js'
 import { nanoid } from 'nanoid'
 import { createNotification } from '../utils/notify.js'
 import {
@@ -19,37 +20,35 @@ function parseGate(row) {
   }
 }
 
-function gateDetail(db, tenantId, gateId) {
+async function gateDetail(db, tenantId, gateId) {
   const gate = await db.get(`
-    SELECT ag.*, a.name AS agent_name,
-      COALESCE((
-        SELECT json_group_array(json_object(
-          'id', u.id, 'name', u.name, 'email', u.email
-        ))
-        FROM approval_gate_approvers aga
-        JOIN users u ON u.id = aga.user_id
-        WHERE aga.gate_id = ag.id
-      ), '[]') AS approvers,
-      COALESCE((
-        SELECT json_group_array(json_object(
-          'id', ad.id, 'approver_id', ad.approver_id,
-          'approver_name', u.name, 'approver_email', u.email,
-          'decision', ad.decision, 'reason', ad.reason,
-          'decided_at', ad.decided_at, 'ip_address', ad.ip_address
-        ))
-        FROM approval_decisions ad
-        JOIN users u ON u.id = ad.approver_id
-        WHERE ad.gate_id = ag.id AND ad.tenant_id = ag.tenant_id
-      ), '[]') AS decisions
+    SELECT ag.*, a.name AS agent_name
     FROM approval_gates ag
     JOIN agents a ON a.id = ag.agent_id AND a.tenant_id = ag.tenant_id
     WHERE ag.id = ? AND ag.tenant_id = ?
   `, [gateId, tenantId])
+  if (!gate) return null
+  const approvers = await db.all(`
+    SELECT u.id, u.name, u.email
+    FROM approval_gate_approvers aga
+    JOIN users u ON u.id = aga.user_id
+    WHERE aga.gate_id = ?
+  `, [gateId])
+  const decisions = await db.all(`
+    SELECT ad.id, ad.approver_id, u.name AS approver_name,
+           u.email AS approver_email, ad.decision, ad.reason,
+           ad.decided_at, ad.ip_address
+    FROM approval_decisions ad
+    JOIN users u ON u.id = ad.approver_id
+    WHERE ad.gate_id = ? AND ad.tenant_id = ?
+  `, [gateId, tenantId])
+  gate.approvers = JSON.stringify(approvers)
+  gate.decisions = JSON.stringify(decisions)
   return parseGate(gate)
 }
 
 export default async function approvalsRoutes(fastify) {
-  const db = fastify.db
+  const db = adaptDatabase(fastify.db)
 
   fastify.get('/stats', async (request) => {
     const rows = await db.all(`
@@ -91,7 +90,7 @@ export default async function approvalsRoutes(fastify) {
   })
 
   fastify.get('/:id', async (request, reply) => {
-    const gate = gateDetail(db, request.tenantId, request.params.id)
+    const gate = await gateDetail(db, request.tenantId, request.params.id)
     if (!gate) return reply.code(404).send({ error: 'not_found' })
 
     // Poll this endpoint after a 202 pending_approval response. When status
@@ -124,7 +123,7 @@ export default async function approvalsRoutes(fastify) {
       WHERE gate_id = ? AND user_id = ?
     `, [gate.id, request.user.userId])
     if (!designated) return reply.code(403).send({ error: 'not_designated_approver' })
-    if (isAgentOwner(db, gate, request.user.userId)) {
+    if (await isAgentOwner(db, gate, request.user.userId)) {
       return reply.code(403).send({ error: 'conflict_of_interest' })
     }
     const existing = await db.get(`
@@ -134,8 +133,8 @@ export default async function approvalsRoutes(fastify) {
     if (existing) return reply.code(409).send({ error: 'already_decided' })
 
     let shouldResume = false
-    db.transaction(() => {
-      await db.query(`
+    await db.transaction(async tx => {
+      await tx.query(`
         INSERT INTO approval_decisions (
           id, gate_id, tenant_id, approver_id, decision, reason, ip_address
         ) VALUES (?, ?, ?, ?, ?, ?, ?)
@@ -148,16 +147,17 @@ export default async function approvalsRoutes(fastify) {
         request.ip])
 
       if (decision === 'rejected') {
-        markGateBlocked(db, gate, 'rejected', String(reason).trim(), request.user.userId)
+        await markGateBlocked(tx, gate, 'rejected', String(reason).trim(), request.user.userId)
         return
       }
 
-      const approvals = await db.get(`
+      const approvalRow = await tx.get(`
         SELECT COUNT(*) AS count FROM approval_decisions
         WHERE gate_id = ? AND tenant_id = ? AND decision = 'approved'
-      `, [gate.id, request.tenantId]).count
+      `, [gate.id, request.tenantId])
+      const approvals = approvalRow.count
       if (approvals >= gate.required_approvers) {
-        await db.query(`
+        await tx.query(`
           UPDATE approval_gates
           SET status = 'approved', current_approvals = ?,
               resolved_at = ?, resolved_by = ?
@@ -169,12 +169,12 @@ export default async function approvalsRoutes(fastify) {
           request.tenantId])
         shouldResume = true
       } else {
-        await db.query(`
+        await tx.query(`
           UPDATE approval_gates SET current_approvals = ?
           WHERE id = ? AND tenant_id = ? AND status = 'pending'
         `, [approvals, gate.id, request.tenantId])
       }
-    })()
+    })
 
     if (shouldResume && gate.workflow_id) {
       setImmediate(async () => {
@@ -194,7 +194,7 @@ export default async function approvalsRoutes(fastify) {
       })
     }
 
-    return gateDetail(db, request.tenantId, gate.id)
+    return await gateDetail(db, request.tenantId, gate.id)
   })
 
   fastify.post('/:id/escalate', async (request, reply) => {
@@ -227,6 +227,6 @@ export default async function approvalsRoutes(fastify) {
       actionUrl: `/approvals/${gate.id}`,
     })
 
-    return gateDetail(db, request.tenantId, gate.id)
+    return await gateDetail(db, request.tenantId, gate.id)
   })
 }

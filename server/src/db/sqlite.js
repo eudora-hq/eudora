@@ -29,8 +29,15 @@ export function createSQLiteAdapter(options = {}) {
     all(sql, params = []) {
       return raw.prepare(sql).all(...params)
     },
+    columns(table) {
+      return raw.pragma(`table_info("${String(table).replaceAll('"', '""')}")`)
+    },
     exec(sql) {
       return raw.exec(sql)
+    },
+    async sizeBytes() {
+      return raw.pragma('page_count', { simple: true })
+        * raw.pragma('page_size', { simple: true })
     },
     async transaction(callback) {
       raw.exec('BEGIN')

@@ -1,6 +1,8 @@
 import { encrypt, decrypt } from './encryption.js'
+import { adaptDatabase } from '../db/index.js'
 
 export async function refreshOAuthToken(db, apiKeyId, tenantId) {
+  db = adaptDatabase(db)
   const row = await db.get('SELECT * FROM api_keys WHERE id = ?', [apiKeyId])
   if (!row || row.tenant_id !== tenantId) {
     throw new Error('API key not found or access denied')

@@ -1,4 +1,5 @@
 import getDb from '../db/client.js'
+import { adaptDatabase } from '../db/index.js'
 import { decrypt } from '../utils/encryption.js'
 import { refreshOAuthToken } from '../utils/oauthRefresh.js'
 import { resolveModel } from '../utils/resolveModel.js'
@@ -35,7 +36,7 @@ function checkStatus(res, provider) {
 }
 
 export async function relay(composedPrompt, apiKeyId, tenantId, modelOverride = null) {
-  const db = getDb()
+  const db = adaptDatabase(getDb())
   const row = await db.get('SELECT * FROM api_keys WHERE id = ?', [apiKeyId])
   if (!row || row.tenant_id !== tenantId) throw new Error('API key not found or access denied')
 

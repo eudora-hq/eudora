@@ -1,4 +1,5 @@
 import getDb from '../db/client.js'
+import { adaptDatabase } from '../db/index.js'
 import { decrypt } from '../utils/encryption.js'
 import { INTENT_TYPES } from '../../../shared/constants/intentTypes.js'
 import { refreshOAuthToken } from '../utils/oauthRefresh.js'
@@ -40,7 +41,7 @@ function checkStatus(res) {
 
 export async function classify(userMessage, apiKeyId, tenantId) {
   try {
-    const db = getDb()
+    const db = adaptDatabase(getDb())
     const row = await db.get('SELECT * FROM api_keys WHERE id = ?', [apiKeyId])
     if (!row || row.tenant_id !== tenantId) throw new Error('API key not found or access denied')
 

@@ -1,3 +1,4 @@
+import { adaptDatabase } from '../db/index.js'
 import { nanoid } from 'nanoid'
 import { testConnection, pullAuditLogs } from '../integrations/azureOpenAI.js'
 import {
@@ -61,7 +62,7 @@ function auditAction(source, operation) {
 }
 
 export default async function integrationsRoutes(fastify) {
-  const db = fastify.db
+  const db = adaptDatabase(fastify.db)
 
   fastify.get('/', async (request) => {
     return await db.all(`
@@ -208,35 +209,34 @@ export default async function integrationsRoutes(fastify) {
       const events = source === 'github_copilot'
         ? await pullCopilotAuditLogs(config, since)
         : await pullAuditLogs(config, since)
-      const insertAudit = db.prepare(`
-        INSERT INTO audit_log (
-          id, tenant_id, user_id, action, risk_score, metadata,
-          initiated_by_user_id, agent_chain, ts
-        )
-        VALUES (?, ?, ?, ?, 0, ?, ?, '[]', ?)
-      `)
       let imported = 0
 
-      const importEvents = db.transaction(() => {
+      await db.transaction(async tx => {
         for (const event of events) {
-          insertAudit.run(
-            nanoid(),
-            request.tenantId,
-            request.user.userId,
-            auditAction(source, event.operation || event.action),
-            JSON.stringify({
-              source,
-              integrationId: integration.id,
-              integrationName: integration.name,
-              ...event,
-            }),
-            request.user.userId,
-            event.timestamp || Date.now()
+          await tx.query(
+            `INSERT INTO audit_log (
+              id, tenant_id, user_id, action, risk_score, metadata,
+              initiated_by_user_id, agent_chain, ts
+            )
+            VALUES (?, ?, ?, ?, 0, ?, ?, '[]', ?)`,
+            [
+              nanoid(),
+              request.tenantId,
+              request.user.userId,
+              auditAction(source, event.operation || event.action),
+              JSON.stringify({
+                source,
+                integrationId: integration.id,
+                integrationName: integration.name,
+                ...event,
+              }),
+              request.user.userId,
+              event.timestamp || Date.now(),
+            ]
           )
           imported += 1
         }
       })
-      importEvents()
 
       const syncedAt = Date.now()
       await db.query(`

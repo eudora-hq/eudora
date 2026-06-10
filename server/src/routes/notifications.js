@@ -1,12 +1,13 @@
+import { adaptDatabase } from '../db/index.js'
 import { createNotification } from '../utils/notify.js'
 
 const THREE_DAYS_MS = 3 * 24 * 60 * 60 * 1000
 
 export default async function notificationsRoutes(fastify) {
-  const db = fastify.db
+  const db = adaptDatabase(fastify.db)
 
   fastify.get('/', async (request) => {
-    ensureTrialNotification(db, request.tenantId)
+    await ensureTrialNotification(db, request.tenantId)
 
     const notifications = await db.all(`
       SELECT *
@@ -49,10 +50,11 @@ export default async function notificationsRoutes(fastify) {
   })
 }
 
-function ensureTrialNotification(db, tenantId) {
-  const tenant = db
-    .prepare('SELECT plan, trial_ends_at FROM tenants WHERE id = ?')
-    .get(tenantId)
+async function ensureTrialNotification(db, tenantId) {
+  const tenant = await db.get(
+    'SELECT plan, trial_ends_at FROM tenants WHERE id = ?',
+    [tenantId]
+  )
 
   if (!tenant || tenant.plan !== 'trial' || tenant.trial_ends_at === null) return
 
@@ -74,7 +76,7 @@ function ensureTrialNotification(db, tenantId) {
   if (existing) return
 
   const daysLeft = Math.max(1, Math.ceil(remainingMs / (24 * 60 * 60 * 1000)))
-  createNotification(db, {
+  await createNotification(db, {
     tenantId,
     type,
     title: type === 'trial_expired' ? 'Trial has ended' : 'Trial ending soon',

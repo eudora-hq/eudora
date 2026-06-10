@@ -1,3 +1,4 @@
+import { adaptDatabase } from '../db/index.js'
 import { randomBytes } from 'crypto'
 import { nanoid } from 'nanoid'
 import { TIER_LIMITS } from '../../../shared/constants/tierLimits.js'
@@ -19,7 +20,7 @@ function serializeSeatLimit(limit) {
 }
 
 export default async function teamRoutes(fastify) {
-  const db = fastify.db
+  const db = adaptDatabase(fastify.db)
 
   fastify.get('/', async (request) => {
     const members = await db.all(`
@@ -72,9 +73,11 @@ export default async function teamRoutes(fastify) {
       : TIER_LIMITS[tenant?.plan || 'trial']?.seats ?? 1
 
     if (seatLimit !== Infinity) {
-      const memberCount = db
-        .prepare('SELECT COUNT(*) AS count FROM users WHERE tenant_id = ?')
-        .get(request.tenantId).count
+      const memberCountRow = await db.get(
+        'SELECT COUNT(*) AS count FROM users WHERE tenant_id = ?',
+        [request.tenantId]
+      )
+      const memberCount = memberCountRow.count
       const pendingCount = await db.get(`
         SELECT COUNT(*) AS count
         FROM invites
@@ -90,9 +93,7 @@ export default async function teamRoutes(fastify) {
       }
     }
 
-    const existing = db
-      .prepare('SELECT id FROM users WHERE LOWER(email) = ? AND tenant_id = ?')
-      .get(normalisedEmail, request.tenantId)
+    const existing = await db.get('SELECT id FROM users WHERE LOWER(email) = ? AND tenant_id = ?', [normalisedEmail, request.tenantId])
     if (existing) {
       return reply.code(409).send({
         error: 'already_member',
@@ -131,9 +132,7 @@ export default async function teamRoutes(fastify) {
       expiresAt,
       createdAt])
 
-    const inviter = db
-      .prepare('SELECT name, email FROM users WHERE id = ?')
-      .get(request.user.userId)
+    const inviter = await db.get('SELECT name, email FROM users WHERE id = ?', [request.user.userId])
     const clientUrl = process.env.CLIENT_URL || 'http://localhost:5173'
     const inviteUrl = `${clientUrl}/accept-invite?token=${token}`
 
@@ -159,9 +158,7 @@ export default async function teamRoutes(fastify) {
   fastify.delete('/invite/:id', async (request, reply) => {
     if (!requireTeamAdmin(request, reply)) return
 
-    const invite = db
-      .prepare('SELECT * FROM invites WHERE id = ? AND tenant_id = ?')
-      .get(request.params.id, request.tenantId)
+    const invite = await db.get('SELECT * FROM invites WHERE id = ? AND tenant_id = ?', [request.params.id, request.tenantId])
     if (!invite) return reply.code(404).send({ error: 'not_found' })
 
     await db.query('UPDATE invites SET status = ? WHERE id = ?', ['cancelled', request.params.id])
@@ -179,9 +176,10 @@ export default async function teamRoutes(fastify) {
       })
     }
 
-    const member = db
-      .prepare('SELECT * FROM users WHERE id = ? AND tenant_id = ?')
-      .get(userId, request.tenantId)
+    const member = await db.get(
+      'SELECT * FROM users WHERE id = ? AND tenant_id = ?',
+      [userId, request.tenantId]
+    )
     if (!member) return reply.code(404).send({ error: 'not_found' })
     if (member.role === 'owner') {
       return reply.code(403).send({
@@ -190,10 +188,10 @@ export default async function teamRoutes(fastify) {
       })
     }
 
-    db.transaction(() => {
-      await db.query('DELETE FROM refresh_tokens WHERE user_id = ?', [userId])
-      await db.query('DELETE FROM users WHERE id = ? AND tenant_id = ?', [userId, request.tenantId])
-    })()
+    await db.transaction(async tx => {
+      await tx.query('DELETE FROM refresh_tokens WHERE user_id = ?', [userId])
+      await tx.query('DELETE FROM users WHERE id = ? AND tenant_id = ?', [userId, request.tenantId])
+    })
 
     return reply.send({ removed: true })
   })
@@ -206,9 +204,7 @@ export default async function teamRoutes(fastify) {
       return reply.code(400).send({ error: 'invalid_role' })
     }
 
-    const member = db
-      .prepare('SELECT * FROM users WHERE id = ? AND tenant_id = ?')
-      .get(request.params.userId, request.tenantId)
+    const member = await db.get('SELECT * FROM users WHERE id = ? AND tenant_id = ?', [request.params.userId, request.tenantId])
     if (!member) return reply.code(404).send({ error: 'not_found' })
     if (member.role === 'owner') {
       return reply.code(403).send({ error: 'cannot_change_owner_role' })

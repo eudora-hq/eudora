@@ -1,3 +1,4 @@
+import { adaptDatabase } from '../db/index.js'
 import Stripe from 'stripe'
 import { TIER_LIMITS } from '../../../shared/constants/tierLimits.js'
 import { normalizePlan, seedFeatureFlags } from '../billing/canAccess.js'
@@ -21,21 +22,15 @@ function serializeLimit(limit) {
 }
 
 export default async function billingRoutes(fastify) {
-  const db = fastify.db
+  const db = adaptDatabase(fastify.db)
 
   fastify.get('/', async () => [])
 
   fastify.get('/subscription', async (request, reply) => {
     const tenant = await db.get('SELECT * FROM tenants WHERE id = ?', [request.tenantId])
-    const agentCount = db
-      .prepare('SELECT COUNT(*) AS count FROM agents WHERE tenant_id = ?')
-      .get(request.tenantId).count
-    const memberCount = db
-      .prepare('SELECT COUNT(*) AS count FROM users WHERE tenant_id = ?')
-      .get(request.tenantId).count
-    const oldestAudit = db
-      .prepare('SELECT MIN(ts) AS oldest FROM audit_log WHERE tenant_id = ?')
-      .get(request.tenantId).oldest
+    const agentCount = (await db.get('SELECT COUNT(*) AS count FROM agents WHERE tenant_id = ?', [request.tenantId])).count
+    const memberCount = (await db.get('SELECT COUNT(*) AS count FROM users WHERE tenant_id = ?', [request.tenantId])).count
+    const oldestAudit = (await db.get('SELECT MIN(ts) AS oldest FROM audit_log WHERE tenant_id = ?', [request.tenantId])).oldest
 
     let cancelling = false
     let cancelAt = null
@@ -85,9 +80,7 @@ export default async function billingRoutes(fastify) {
     if (!stripeClient) return reply.code(503).send({ error: 'stripe_not_configured' })
 
     try {
-      const tenant = db
-        .prepare('SELECT stripe_customer_id FROM tenants WHERE id = ?')
-        .get(request.tenantId)
+      const tenant = await db.get('SELECT stripe_customer_id FROM tenants WHERE id = ?', [request.tenantId])
 
       const sessionParams = {
         mode: 'subscription',
@@ -115,9 +108,7 @@ export default async function billingRoutes(fastify) {
     const stripeClient = getStripeClient()
     if (!stripeClient) return reply.code(503).send({ error: 'stripe_not_configured' })
 
-    const tenant = db
-      .prepare('SELECT stripe_customer_id FROM tenants WHERE id = ?')
-      .get(request.tenantId)
+    const tenant = await db.get('SELECT stripe_customer_id FROM tenants WHERE id = ?', [request.tenantId])
 
     if (!tenant?.stripe_customer_id) {
       return reply.code(400).send({
@@ -262,9 +253,7 @@ export default async function billingRoutes(fastify) {
         case 'customer.subscription.updated': {
           const subscription = event.data.object
           const customerId = subscription.customer
-          const tenant = db
-            .prepare('SELECT id FROM tenants WHERE stripe_customer_id = ?')
-            .get(customerId)
+          const tenant = await db.get('SELECT id FROM tenants WHERE stripe_customer_id = ?', [customerId])
           if (!tenant) break
 
           const priceId = subscription.items?.data?.[0]?.price?.id
@@ -285,9 +274,7 @@ export default async function billingRoutes(fastify) {
         case 'customer.subscription.deleted': {
           const subscription = event.data.object
           const customerId = subscription.customer
-          const tenant = db
-            .prepare('SELECT id FROM tenants WHERE stripe_customer_id = ?')
-            .get(customerId)
+          const tenant = await db.get('SELECT id FROM tenants WHERE stripe_customer_id = ?', [customerId])
           if (!tenant) break
 
           const expiredAt = Date.now() - 1
@@ -317,13 +304,14 @@ export default async function billingRoutes(fastify) {
       : TIER_LIMITS[plan] || TIER_LIMITS.trial
     const since = Date.now() - 24 * 60 * 60 * 1000
 
-    const agents = await db.get('SELECT COUNT(*) AS count FROM agents WHERE tenant_id = ?', [tenantId]).count
-    const messagesToday = db
-      .prepare("SELECT COALESCE(SUM(value), 0) AS total FROM usage_events WHERE tenant_id = ? AND event_type = 'message' AND ts > ?")
-      .get(tenantId, since).total
-    const cronJobs = await db.get('SELECT COUNT(*) AS count FROM cron_jobs WHERE tenant_id = ?', [tenantId]).count
-    const contextFiles = await db.get('SELECT COUNT(*) AS count FROM context_files WHERE tenant_id = ?', [tenantId]).count
-    const workflows = await db.get('SELECT COUNT(*) AS count FROM workflows WHERE tenant_id = ?', [tenantId]).count
+    const agents = (await db.get('SELECT COUNT(*) AS count FROM agents WHERE tenant_id = ?', [tenantId])).count
+    const messagesToday = (await db.get(
+      "SELECT COALESCE(SUM(value), 0) AS total FROM usage_events WHERE tenant_id = ? AND event_type = 'message' AND ts > ?",
+      [tenantId, since]
+    )).total
+    const cronJobs = (await db.get('SELECT COUNT(*) AS count FROM cron_jobs WHERE tenant_id = ?', [tenantId])).count
+    const contextFiles = (await db.get('SELECT COUNT(*) AS count FROM context_files WHERE tenant_id = ?', [tenantId])).count
+    const workflows = (await db.get('SELECT COUNT(*) AS count FROM workflows WHERE tenant_id = ?', [tenantId])).count
 
     return reply.send({
       plan: process.env.SELF_HOSTED === 'true' ? 'enterprise' : plan,

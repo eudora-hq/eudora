@@ -1,3 +1,4 @@
+import { adaptDatabase } from '../db/index.js'
 import { createHash } from 'crypto'
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'fs'
 import { dirname, resolve } from 'path'
@@ -77,7 +78,7 @@ async function verifyStoredReport(report, pdfBuffer) {
 }
 
 export async function registerReportVerificationRoute(fastify) {
-  const db = fastify.db
+  const db = adaptDatabase(fastify.db)
 
   fastify.get('/:id/verify', async (request, reply) => {
     const report = await db.get(
@@ -100,7 +101,7 @@ function parseRegulationRefs(value, fallback) {
 }
 
 export async function registerArticle50Routes(fastify) {
-  const db = fastify.db
+  const db = adaptDatabase(fastify.db)
 
   fastify.get('/records', async (request, reply) => {
     const {
@@ -146,29 +147,21 @@ export async function registerArticle50Routes(fastify) {
       ORDER BY interaction_timestamp DESC
     `, params)
 
-    const findRiskScore = db.prepare(`
-      SELECT risk_score FROM audit_log
-      WHERE tenant_id = ?
-        AND (
-          id = ?
-          OR CASE
-            WHEN json_valid(metadata) THEN json_extract(metadata, '$.runId')
-            ELSE NULL
-          END = ?
-        )
-      ORDER BY ts DESC
-      LIMIT 1
-    `)
-
-    return records.map(record => {
-      const auditEvent = findRiskScore.get(request.tenantId, record.run_id, record.run_id)
+    return await Promise.all(records.map(async record => {
+      const auditEvent = await db.get(
+        `SELECT risk_score FROM audit_log
+         WHERE tenant_id = ? AND (id = ? OR metadata LIKE ?)
+         ORDER BY ts DESC
+         LIMIT 1`,
+        [request.tenantId, record.run_id, `%"runId":"${record.run_id}"%`]
+      )
       return {
         ...record,
         disclosure_made: Boolean(record.disclosure_made),
         regulation_refs: JSON.parse(record.regulation_refs || '[]'),
         risk_score: auditEvent?.risk_score ?? null,
       }
-    })
+    }))
   })
 
   fastify.post('/records', async (request, reply) => {
@@ -236,7 +229,7 @@ export async function registerArticle50Routes(fastify) {
 }
 
 export default async function reportsRoutes(fastify) {
-  const db = fastify.db
+  const db = adaptDatabase(fastify.db)
 
   fastify.post('/generate', async (request, reply) => {
     if (!canGenerateReports(request)) {
@@ -304,8 +297,8 @@ export default async function reportsRoutes(fastify) {
       sectorTemplate,
     })
 
-    db.transaction(() => {
-      await db.query(`
+    await db.transaction(async tx => {
+      await tx.query(`
         INSERT INTO compliance_reports
           (
             id, tenant_id, date_from, date_to, report_hash, generated_at, agent_id,
@@ -326,30 +319,30 @@ export default async function reportsRoutes(fastify) {
         resolvedReportMode])
 
       if (resolvedReportMode === 'article50') {
-        const insertRecord = db.prepare(`
-          INSERT INTO article50_records (
-            id, tenant_id, agent_id, run_id, interaction_timestamp,
-            disclosure_made, disclosure_method, output_summary,
-            sector_template, regulation_refs
+        for (const record of data.article50Records) {
+          await tx.query(
+            `INSERT INTO article50_records (
+              id, tenant_id, agent_id, run_id, interaction_timestamp,
+              disclosure_made, disclosure_method, output_summary,
+              sector_template, regulation_refs
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+            [
+              nanoid(),
+              request.tenantId,
+              record.agentId,
+              record.runId,
+              record.interactionTimestamp,
+              record.disclosureMade,
+              record.disclosureMethod,
+              record.outputSummary,
+              record.sectorTemplate,
+              JSON.stringify(record.regulationRefs),
+            ]
           )
-          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-        `)
-        data.article50Records.forEach(record => {
-          insertRecord.run(
-            nanoid(),
-            request.tenantId,
-            record.agentId,
-            record.runId,
-            record.interactionTimestamp,
-            record.disclosureMade,
-            record.disclosureMethod,
-            record.outputSummary,
-            record.sectorTemplate,
-            JSON.stringify(record.regulationRefs)
-          )
-        })
+        }
       }
-    })()
+    })
 
     writeFileSync(reportPath(reportId), pdfBuffer)
     reply.header('X-Report-Id', reportId)

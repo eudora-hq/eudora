@@ -1,12 +1,11 @@
+import { adaptDatabase } from '../db/index.js'
 import { nanoid } from 'nanoid'
 import { encrypt, decrypt } from '../utils/encryption.js'
 import { isUnderLimit } from '../billing/canAccess.js'
 import { generateEmbeddingWithMetadata } from '../utils/embeddings.js'
 
 async function embedContextFile(db, fileId, tenantId, content) {
-  const columns = new Set(
-    await db.all('PRAGMA table_info(context_files)').map(column => column.name)
-  )
+  const columns = new Set((await db.columns('context_files')).map(column => column.name))
   if (!columns.has('embedding')) return
 
   const openAIKey = await db.get(`
@@ -51,7 +50,7 @@ async function embedContextFile(db, fileId, tenantId, content) {
 }
 
 export default async function contextRoutes(fastify) {
-  const db = fastify.db
+  const db = adaptDatabase(fastify.db)
 
   // POST /context
   fastify.post('/', async (request, reply) => {
@@ -65,7 +64,7 @@ export default async function contextRoutes(fastify) {
     if (!agent) return reply.code(404).send({ error: 'agent_not_found' })
     if (agent.tenant_id !== request.tenantId) return reply.code(403).send({ error: 'forbidden' })
 
-    if (!isUnderLimit(db, request.tenantId, request.tenant.plan, 'context_files')) {
+    if (!await isUnderLimit(db, request.tenantId, request.tenant.plan, 'context_files')) {
       return reply.code(403).send({ error: 'limit_reached', upgradeUrl: '/billing' })
     }
 
@@ -99,11 +98,9 @@ export default async function contextRoutes(fastify) {
     if (!agent) return reply.code(404).send({ error: 'agent_not_found' })
     if (agent.tenant_id !== request.tenantId) return reply.code(403).send({ error: 'forbidden' })
 
-    const rows = db
-      .prepare(
+    const rows = await db.all(
         'SELECT id, agent_id, filename, tags, created_at, updated_at FROM context_files WHERE agent_id = ? AND tenant_id = ?'
-      )
-      .all(agentId, request.tenantId)
+      , [agentId, request.tenantId])
 
     return reply.send(rows.map((row) => ({ ...row, tags: JSON.parse(row.tags) })))
   })

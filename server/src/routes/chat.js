@@ -1,3 +1,4 @@
+import { adaptDatabase } from '../db/index.js'
 import { nanoid } from 'nanoid'
 import { classify } from '../core/classifier.js'
 import { retrieve } from '../core/contextRetriever.js'
@@ -19,7 +20,7 @@ import { createNotification } from '../utils/notify.js'
 import { resolveModel } from '../utils/resolveModel.js'
 
 export default async function chatRoutes(fastify) {
-  const db = fastify.db
+  const db = adaptDatabase(fastify.db)
 
   // POST /chat
   fastify.post('/', async (request, reply) => {
@@ -29,9 +30,7 @@ export default async function chatRoutes(fastify) {
     if (!agentId) return reply.code(400).send({ error: 'agentId is required' })
     if (!message) return reply.code(400).send({ error: 'message is required' })
 
-    const agent = db
-      .prepare('SELECT * FROM agents WHERE id = ? AND tenant_id = ?')
-      .get(agentId, request.tenantId)
+    const agent = await db.get('SELECT * FROM agents WHERE id = ? AND tenant_id = ?', [agentId, request.tenantId])
     if (!agent) return reply.code(404).send({ error: 'agent_not_found' })
     if (agent.agent_type === 'external') {
       return reply.code(400).send({
@@ -50,7 +49,7 @@ export default async function chatRoutes(fastify) {
       : null
     const configuredModel = resolveModel(agent, connection)
 
-    if (!isUnderLimit(db, request.tenantId, request.tenant.plan, 'messages_per_day')) {
+    if (!await isUnderLimit(db, request.tenantId, request.tenant.plan, 'messages_per_day')) {
       return reply.code(429).send({ error: 'daily_limit_reached', upgradeUrl: '/billing' })
     }
 
@@ -61,9 +60,7 @@ export default async function chatRoutes(fastify) {
         'INSERT INTO conversations (id, tenant_id, agent_id, user_id, created_at) VALUES (?, ?, ?, ?, ?)'
       , [conversationId, request.tenantId, agentId, request.user.userId, Date.now()])
     } else {
-      const conv = db
-        .prepare('SELECT id, tenant_id FROM conversations WHERE id = ?')
-        .get(conversationId)
+      const conv = await db.get('SELECT id, tenant_id FROM conversations WHERE id = ?', [conversationId])
       if (!conv) return reply.code(404).send({ error: 'conversation_not_found' })
       if (conv.tenant_id !== request.tenantId) return reply.code(403).send({ error: 'forbidden' })
     }
@@ -258,11 +255,9 @@ export default async function chatRoutes(fastify) {
 
   // GET /chat/conversations
   fastify.get('/conversations', async (request, reply) => {
-    const rows = db
-      .prepare(
+    const rows = await db.all(
         'SELECT id, agent_id, created_at FROM conversations WHERE tenant_id = ? ORDER BY created_at DESC'
-      )
-      .all(request.tenantId)
+      , [request.tenantId])
     return reply.send(rows)
   })
 
@@ -273,11 +268,9 @@ export default async function chatRoutes(fastify) {
     if (!conv) return reply.code(404).send({ error: 'not_found' })
     if (conv.tenant_id !== request.tenantId) return reply.code(403).send({ error: 'forbidden' })
 
-    const messages = db
-      .prepare(
+    const messages = await db.all(
         'SELECT id, role, content, created_at FROM messages WHERE conversation_id = ? ORDER BY created_at ASC, rowid ASC'
-      )
-      .all(id)
+      , [id])
     return reply.send(messages)
   })
 
@@ -288,9 +281,7 @@ export default async function chatRoutes(fastify) {
     if (!conv) return reply.code(404).send({ error: 'not_found' })
     if (conv.tenant_id !== request.tenantId) return reply.code(403).send({ error: 'forbidden' })
 
-    const traces = db
-      .prepare('SELECT * FROM traces WHERE conversation_id = ? AND tenant_id = ? ORDER BY ts ASC')
-      .all(id, request.tenantId)
+    const traces = await db.all('SELECT * FROM traces WHERE conversation_id = ? AND tenant_id = ? ORDER BY ts ASC', [id, request.tenantId])
 
     return reply.send(
       traces.map(t => ({ ...t, context_injected: JSON.parse(t.context_injected) }))

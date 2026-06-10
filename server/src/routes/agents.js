@@ -1,3 +1,4 @@
+import { adaptDatabase } from '../db/index.js'
 import { nanoid } from 'nanoid'
 import { isUnderAgentLimit } from '../billing/canAccess.js'
 import { log } from '../audit/auditLogger.js'
@@ -24,7 +25,7 @@ function generateProxyKey() {
 }
 
 export default async function agentsRoutes(fastify) {
-  const db = fastify.db
+  const db = adaptDatabase(fastify.db)
 
   // List all agents for tenant
   fastify.get('/', async (request) => {
@@ -72,7 +73,7 @@ export default async function agentsRoutes(fastify) {
     if (!INTERCEPTION_MODES.has(mode)) {
       return reply.code(400).send({ error: 'invalid_interception_mode' })
     }
-    if (!isUnderAgentLimit(db, request.tenantId, request.tenant.plan)) {
+    if (!await isUnderAgentLimit(db, request.tenantId, request.tenant.plan)) {
       return reply.code(403).send({
         error: 'limit_reached',
         message: 'Upgrade to monitor more agents',
@@ -80,7 +81,7 @@ export default async function agentsRoutes(fastify) {
       })
     }
 
-    const ownership = validateOwnership(
+    const ownership = await validateOwnership(
       db,
       ownerId,
       ownerType,
@@ -294,7 +295,7 @@ export default async function agentsRoutes(fastify) {
         message: 'name, purpose and model_provider are required',
       })
     }
-    if (!isUnderAgentLimit(db, request.tenantId, request.tenant.plan)) {
+    if (!await isUnderAgentLimit(db, request.tenantId, request.tenant.plan)) {
       return reply.code(403).send({
         error: 'limit_reached',
         message: 'Upgrade to monitor more agents',
@@ -306,7 +307,7 @@ export default async function agentsRoutes(fastify) {
     const resolvedOwnerType = owner_type || 'human'
     const resolvedOwnerId = owner_id || request.user.userId
 
-    const ownership = validateOwnership(
+    const ownership = await validateOwnership(
       db,
       resolvedOwnerId,
       resolvedOwnerType,
@@ -376,7 +377,7 @@ export default async function agentsRoutes(fastify) {
       const newOwnerType = owner_type || agent.owner_type
       const newOwnerId = owner_id || agent.owner_id
 
-      const ownership = validateOwnership(
+      const ownership = await validateOwnership(
         db,
         newOwnerId,
         newOwnerType,

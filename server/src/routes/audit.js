@@ -1,3 +1,4 @@
+import { adaptDatabase } from '../db/index.js'
 import PDFDocument from 'pdfkit'
 import { format as stringify } from 'fast-csv'
 import { TIER_LIMITS } from '../../../shared/constants/tierLimits.js'
@@ -12,7 +13,7 @@ function parseMetadata(value) {
 }
 
 export default async function auditRoutes(fastify) {
-  const db = fastify.db
+  const db = adaptDatabase(fastify.db)
 
   // GET /audit — paginated audit log with filters
   fastify.get('/', async (request, reply) => {
@@ -77,7 +78,7 @@ export default async function auditRoutes(fastify) {
     const { format = 'json', dateFrom, dateTo } = request.query || {}
     const exportFormat = String(format).toLowerCase()
 
-    if (process.env.SELF_HOSTED !== 'true' && !canAccess(db, request.tenantId, 'audit_export')) {
+    if (process.env.SELF_HOSTED !== 'true' && !await canAccess(db, request.tenantId, 'audit_export')) {
       return reply.code(403).send({
         error: 'upgrade_required',
         message: 'Audit export is available on Professional and Enterprise plans',

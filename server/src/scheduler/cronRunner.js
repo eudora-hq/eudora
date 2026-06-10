@@ -1,6 +1,7 @@
 import cron from 'node-cron'
 import { nanoid } from 'nanoid'
 import { getDb } from '../db/client.js'
+import { adaptDatabase } from '../db/index.js'
 import { classify } from '../core/classifier.js'
 import { retrieve } from '../core/contextRetriever.js'
 import { compose } from '../core/promptComposer.js'
@@ -48,7 +49,19 @@ export function deregisterJob(jobId) {
 }
 
 export function loadAllJobs() {
-  const db = getDb()
+  const db = adaptDatabase(getDb())
+  if (db.dialect === 'sqlite') {
+    const jobs = db.all('SELECT * FROM cron_jobs WHERE enabled = 1')
+    for (const job of jobs) {
+      registerJob(job)
+    }
+    console.log(`[cron] Loaded ${jobs.length} jobs`)
+    return
+  }
+  return loadAllJobsPostgres(db)
+}
+
+async function loadAllJobsPostgres(db) {
   const jobs = await db.all('SELECT * FROM cron_jobs WHERE enabled = 1')
   for (const job of jobs) {
     registerJob(job)
@@ -70,16 +83,17 @@ async function runJob(jobId) {
   let resolvedModel = null
 
   try {
-    db = getDb()
+    db = adaptDatabase(getDb())
     job = await db.get('SELECT * FROM cron_jobs WHERE id = ?', [jobId])
     if (!job || job.enabled === 0) {
       deregisterJob(jobId)
       return
     }
 
-    agent = db
-      .prepare('SELECT * FROM agents WHERE id = ? AND tenant_id = ?')
-      .get(job.agent_id, job.tenant_id)
+    agent = await db.get(
+      'SELECT * FROM agents WHERE id = ? AND tenant_id = ?',
+      [job.agent_id, job.tenant_id]
+    )
 
     runId = nanoid()
     startedAt = Date.now()
@@ -104,7 +118,7 @@ async function runJob(jobId) {
       : null
     resolvedModel = resolveModel(agent, connection)
 
-    const humanRootId = getHumanRoot(db, agent.id, job.tenant_id) || agent.owner_id
+    const humanRootId = await getHumanRoot(db, agent.id, job.tenant_id) || agent.owner_id
     const sanitiserResult = sanitise(job.prompt)
     const guardResult = guard(sanitiserResult, agent.purpose)
     const durationBeforeRelay = () => Date.now() - startedAt
@@ -201,7 +215,7 @@ async function runJob(jobId) {
       const errorMessage = err?.message || 'Cron job failed'
       const durationMs = Date.now() - startedAt
       const humanRootId = agent
-        ? getHumanRoot(db, agent.id, job.tenant_id) || agent.owner_id
+        ? await getHumanRoot(db, agent.id, job.tenant_id) || agent.owner_id
         : null
       if (db && runId) {
         await db.query(

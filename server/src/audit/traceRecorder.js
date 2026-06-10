@@ -1,10 +1,11 @@
 import { nanoid } from 'nanoid'
 import getDb from '../db/client.js'
+import { adaptDatabase } from '../db/index.js'
 
 export function record(traceData, db) {
-  setImmediate(() => {
+  setImmediate(async () => {
     try {
-      const _db = db ?? getDb()
+      const _db = adaptDatabase(db ?? getDb())
       await _db.query(`
         INSERT INTO traces
           (id, tenant_id, conversation_id, cron_run_id, workflow_run_id,

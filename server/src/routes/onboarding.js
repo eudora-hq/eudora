@@ -1,3 +1,4 @@
+import { adaptDatabase } from '../db/index.js'
 import { relay } from '../core/modelRelay.js'
 
 const AGENT_SYSTEM_PROMPT = `You are an AI agent configuration generator. Given a description of what an agent should do,
@@ -118,7 +119,7 @@ function parseCronIntent(intent) {
 }
 
 export default async function onboardingRoutes(fastify) {
-  const db = fastify.db
+  const db = adaptDatabase(fastify.db)
 
   fastify.post('/generate-agent', async (request, reply) => {
     const { intent, apiKeyId } = request.body || {}
@@ -130,9 +131,7 @@ export default async function onboardingRoutes(fastify) {
       return reply.code(400).send({ error: 'apiKeyId is required' })
     }
 
-    const key = db
-      .prepare('SELECT id, tenant_id FROM api_keys WHERE id = ?')
-      .get(apiKeyId)
+    const key = await db.get('SELECT id, tenant_id FROM api_keys WHERE id = ?', [apiKeyId])
     if (!key) return reply.code(404).send({ error: 'api_key_not_found' })
     if (key.tenant_id !== request.tenantId) return reply.code(403).send({ error: 'forbidden' })
 
@@ -163,9 +162,7 @@ export default async function onboardingRoutes(fastify) {
       return reply.code(400).send({ error: 'agentId is required' })
     }
 
-    const agent = db
-      .prepare('SELECT id, tenant_id FROM agents WHERE id = ?')
-      .get(agentId)
+    const agent = await db.get('SELECT id, tenant_id FROM agents WHERE id = ?', [agentId])
     if (!agent) return reply.code(404).send({ error: 'agent_not_found' })
     if (agent.tenant_id !== request.tenantId) return reply.code(403).send({ error: 'forbidden' })
 

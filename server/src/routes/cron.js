@@ -1,3 +1,4 @@
+import { adaptDatabase } from '../db/index.js'
 import { nanoid } from 'nanoid'
 import cronParser from 'cron-parser'
 import { isUnderLimit } from '../billing/canAccess.js'
@@ -32,7 +33,7 @@ function validateSchedule(schedule, reply) {
   }
 }
 
-function findJobForTenant(db, id, tenantId, reply) {
+async function findJobForTenant(db, id, tenantId, reply) {
   const job = await db.get('SELECT * FROM cron_jobs WHERE id = ?', [id])
   if (!job) {
     reply.code(404).send({ error: 'cron_job_not_found' })
@@ -59,7 +60,7 @@ function parseContextInjected(value) {
 }
 
 export default async function cronRoutes(fastify) {
-  const db = fastify.db
+  const db = adaptDatabase(fastify.db)
 
   fastify.post('/', async (request, reply) => {
     const { agentId, name, prompt, schedule, preset } = request.body || {}
@@ -73,7 +74,7 @@ export default async function cronRoutes(fastify) {
     const interval = validateSchedule(schedule, reply)
     if (!interval) return reply
 
-    if (!isUnderLimit(db, request.tenantId, request.tenant.plan, 'cron_jobs')) {
+    if (!await isUnderLimit(db, request.tenantId, request.tenant.plan, 'cron_jobs')) {
       return reply.code(403).send({
         error: 'limit_reached',
         message: 'Upgrade to add more scheduled jobs',
@@ -81,9 +82,7 @@ export default async function cronRoutes(fastify) {
       })
     }
 
-    const agent = db
-      .prepare('SELECT id FROM agents WHERE id = ? AND tenant_id = ?')
-      .get(agentId, request.tenantId)
+    const agent = await db.get('SELECT id FROM agents WHERE id = ? AND tenant_id = ?', [agentId, request.tenantId])
     if (!agent) return reply.code(404).send({ error: 'agent_not_found' })
 
     const id = nanoid()
@@ -130,29 +129,23 @@ export default async function cronRoutes(fastify) {
   fastify.get('/', async (request) => {
     const { enabled } = request.query || {}
     const rows = enabled === undefined
-      ? db
-        .prepare(
+      ? await db.all(
           `SELECT cj.*, a.name AS agent_name
            FROM cron_jobs cj
            JOIN agents a ON a.id = cj.agent_id
            WHERE cj.tenant_id = ?
            ORDER BY cj.created_at DESC`
-        )
-        .all(request.tenantId)
-      : db
-        .prepare(
+        , [request.tenantId])
+      : await db.all(
           `SELECT cj.*, a.name AS agent_name
            FROM cron_jobs cj
            JOIN agents a ON a.id = cj.agent_id
            WHERE cj.tenant_id = ? AND cj.enabled = ?
            ORDER BY cj.created_at DESC`
-        )
-        .all(request.tenantId, Number(enabled))
+        , [request.tenantId, Number(enabled)])
 
-    return rows.map((job) => {
-      const lastRun = db
-        .prepare('SELECT status FROM cron_runs WHERE cron_job_id = ? ORDER BY started_at DESC LIMIT 1')
-        .get(job.id)
+    return await Promise.all(rows.map(async (job) => {
+      const lastRun = await db.get('SELECT status FROM cron_runs WHERE cron_job_id = ? ORDER BY started_at DESC LIMIT 1', [job.id])
       return {
         id: job.id,
         name: job.name,
@@ -166,11 +159,11 @@ export default async function cronRoutes(fastify) {
         last_run_status: lastRun?.status || null,
         created_at: job.created_at,
       }
-    })
+    }))
   })
 
   fastify.get('/:id/runs', async (request, reply) => {
-    const job = findJobForTenant(db, request.params.id, request.tenantId, reply)
+    const job = await findJobForTenant(db, request.params.id, request.tenantId, reply)
     if (!job) return reply
 
     const { page = 1, limit = 20 } = request.query || {}
@@ -178,20 +171,21 @@ export default async function cronRoutes(fastify) {
     const numericLimit = Math.max(1, Number(limit) || 20)
     const offset = (numericPage - 1) * numericLimit
 
-    const total = db
-      .prepare('SELECT COUNT(*) AS count FROM cron_runs WHERE cron_job_id = ? AND tenant_id = ?')
-      .get(job.id, request.tenantId).count
-    const rows = db
-      .prepare(
-        `SELECT id, status, output, tokens_used, duration_ms, risk_score, started_at, completed_at
-         FROM cron_runs
-         WHERE cron_job_id = ? AND tenant_id = ?
-         ORDER BY started_at DESC
-         LIMIT ? OFFSET ?`
-      )
-      .all(job.id, request.tenantId, numericLimit, offset)
+    const countRow = await db.get(
+      'SELECT COUNT(*) AS count FROM cron_runs WHERE cron_job_id = ? AND tenant_id = ?',
+      [job.id, request.tenantId]
+    )
+    const total = countRow.count
+    const rows = await db.all(
+      `SELECT id, status, output, tokens_used, duration_ms, risk_score, started_at, completed_at
+       FROM cron_runs
+       WHERE cron_job_id = ? AND tenant_id = ?
+       ORDER BY started_at DESC
+       LIMIT ? OFFSET ?`,
+      [job.id, request.tenantId, numericLimit, offset]
+    )
 
-    const runs = rows.map((run) => {
+    const runs = await Promise.all(rows.map(async (run) => {
       const trace = await db.get('SELECT id FROM traces WHERE cron_run_id = ? LIMIT 1', [run.id])
       return {
         id: run.id,
@@ -204,7 +198,7 @@ export default async function cronRoutes(fastify) {
         completed_at: run.completed_at,
         trace_id: trace?.id || null,
       }
-    })
+    }))
 
     return {
       runs,
@@ -215,25 +209,21 @@ export default async function cronRoutes(fastify) {
   })
 
   fastify.get('/:id/runs/:runId', async (request, reply) => {
-    const job = findJobForTenant(db, request.params.id, request.tenantId, reply)
+    const job = await findJobForTenant(db, request.params.id, request.tenantId, reply)
     if (!job) return reply
 
-    const run = db
-      .prepare(
+    const run = await db.get(
         `SELECT id, status, output, tokens_used, duration_ms, risk_score, started_at, completed_at
          FROM cron_runs
          WHERE id = ? AND cron_job_id = ? AND tenant_id = ?`
-      )
-      .get(request.params.runId, job.id, request.tenantId)
+      , [request.params.runId, job.id, request.tenantId])
     if (!run) return reply.code(404).send({ error: 'cron_run_not_found' })
 
-    const traceRow = db
-      .prepare(
+    const traceRow = await db.get(
         `SELECT id, intent, context_injected, tokens_used, duration_ms, risk_score, ts
          FROM traces
          WHERE cron_run_id = ?`
-      )
-      .get(run.id)
+      , [run.id])
 
     const trace = traceRow
       ? {
@@ -251,13 +241,13 @@ export default async function cronRoutes(fastify) {
   })
 
   fastify.get('/:id', async (request, reply) => {
-    const job = findJobForTenant(db, request.params.id, request.tenantId, reply)
+    const job = await findJobForTenant(db, request.params.id, request.tenantId, reply)
     if (!job) return reply
     return job
   })
 
   fastify.patch('/:id', async (request, reply) => {
-    const job = findJobForTenant(db, request.params.id, request.tenantId, reply)
+    const job = await findJobForTenant(db, request.params.id, request.tenantId, reply)
     if (!job) return reply
 
     const { name, prompt, schedule, preset, enabled } = request.body || {}
@@ -296,7 +286,7 @@ export default async function cronRoutes(fastify) {
   })
 
   fastify.delete('/:id', async (request, reply) => {
-    const job = findJobForTenant(db, request.params.id, request.tenantId, reply)
+    const job = await findJobForTenant(db, request.params.id, request.tenantId, reply)
     if (!job) return reply
 
     await deregisterCronJob(job.id)

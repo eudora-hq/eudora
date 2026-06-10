@@ -1,6 +1,7 @@
 import { createHash } from 'crypto'
 import { nanoid } from 'nanoid'
 import getDb from '../db/client.js'
+import { adaptDatabase } from '../db/index.js'
 
 export const AUDIT_ACTIONS = {
   CHAT_MESSAGE:       'chat_message',
@@ -24,8 +25,8 @@ function sha256(value) {
 export function log(entry, db) {
   setImmediate(async () => {
     try {
-      const _db = db ?? getDb()
-      const hasResolvedModel = await _db.all('PRAGMA table_info(audit_log)')
+      const _db = adaptDatabase(db ?? getDb())
+      const hasResolvedModel = (await _db.columns('audit_log'))
         .some(column => column.name === 'resolved_model')
       const columns = [
         'id', 'tenant_id', 'user_id', 'action', 'context_hash', 'prompt_hash',

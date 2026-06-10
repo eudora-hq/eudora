@@ -69,8 +69,8 @@ async function start() {
   )
 
   const db = getDb()
-  runMigrations(db)
-  loadAllJobs()
+  await runMigrations(db)
+  await loadAllJobs()
   console.log('[startup] Cron scheduler loaded')
   startApprovalMonitor(db, fastify.log)
   fastify.decorate('db', db)
@@ -251,16 +251,7 @@ custom_domains = ${subdomain}.tunnel.geteudora.com`,
     const now = Date.now()
     const last24Hours = now - 24 * 60 * 60 * 1000
 
-    let dbSizeBytes = db.pragma('page_count', { simple: true })
-      * db.pragma('page_size', { simple: true })
-    try {
-      const { statSync } = await import('fs')
-      const databaseFile = db.pragma('database_list')
-        .find(database => database.name === 'main')?.file
-      if (databaseFile) dbSizeBytes = statSync(databaseFile).size
-    } catch {
-      // SQLite page metrics remain available for in-memory or inaccessible files.
-    }
+    const dbSizeBytes = await db.sizeBytes()
 
     const auditStats = await db.get(`
       SELECT

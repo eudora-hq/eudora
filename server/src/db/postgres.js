@@ -1,7 +1,8 @@
 import pg from 'pg'
 import { rewritePlaceholders } from './queryRewriter.js'
 
-const { Pool } = pg
+const { Pool, types } = pg
+types.setTypeParser(20, value => Number(value))
 
 function createClientAdapter(client) {
   return {
@@ -23,6 +24,16 @@ function createClientAdapter(client) {
       const result = await client.query(rewritePlaceholders(sql), params)
       return result.rows
     },
+    async columns(table) {
+      const result = await client.query(
+        `SELECT column_name AS name, data_type AS type
+         FROM information_schema.columns
+         WHERE table_schema = current_schema() AND table_name = $1
+         ORDER BY ordinal_position`,
+        [table]
+      )
+      return result.rows
+    },
     async exec(sql) {
       return client.query(sql)
     },
@@ -40,6 +51,10 @@ export function createPostgresAdapter(options = {}) {
   const adapter = {
     ...createClientAdapter(pool),
     pool,
+    async sizeBytes() {
+      const result = await pool.query('SELECT pg_database_size(current_database()) AS size')
+      return Number(result.rows[0]?.size || 0)
+    },
     async transaction(callback) {
       const client = await pool.connect()
       const transactionDb = createClientAdapter(client)

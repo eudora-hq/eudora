@@ -1,3 +1,4 @@
+import { adaptDatabase } from '../db/index.js'
 import { ZipArchive } from 'archiver'
 import { decrypt } from '../utils/encryption.js'
 
@@ -22,7 +23,7 @@ function appendJson(archive, name, data) {
 }
 
 export default async function accountRoutes(fastify) {
-  const db = fastify.db
+  const db = adaptDatabase(fastify.db)
 
   fastify.get('/export', async (request, reply) => {
     const tenantId = request.tenantId
@@ -72,16 +73,16 @@ export default async function accountRoutes(fastify) {
        WHERE tenant_id = ?
        ORDER BY created_at DESC`
     , [tenantId])
-    const messagesByConversation = db.prepare(
-      `SELECT id, role, content, created_at
-       FROM messages
-       WHERE tenant_id = ? AND conversation_id = ?
-       ORDER BY created_at ASC`
-    )
-    const conversationsWithMessages = conversations.map((conversation) => ({
+    const conversationsWithMessages = await Promise.all(conversations.map(async conversation => ({
       ...conversation,
-      messages: messagesByConversation.all(tenantId, conversation.id),
-    }))
+      messages: await db.all(
+        `SELECT id, role, content, created_at
+         FROM messages
+         WHERE tenant_id = ? AND conversation_id = ?
+         ORDER BY created_at ASC`,
+        [tenantId, conversation.id]
+      ),
+    })))
 
     reply.header('Content-Type', 'application/zip')
     reply.header('Content-Disposition', 'attachment; filename="eudora-export.zip"')

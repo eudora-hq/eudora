@@ -1,4 +1,6 @@
-export function checkTrialExpiry(request, reply, done) {
+import { adaptDatabase } from '../db/index.js'
+
+export async function checkTrialExpiry(request, reply, done) {
   if (process.env.SELF_HOSTED === 'true') {
     request.tenant = { plan: 'enterprise', trial_ends_at: null }
     return done()
@@ -13,10 +15,8 @@ export function checkTrialExpiry(request, reply, done) {
     path.startsWith('/health')
 
   // Use the Fastify-decorated db so tests can inject an in-memory instance
-  const db = request.server.db
-  const tenant = db
-    .prepare('SELECT plan, trial_ends_at FROM tenants WHERE id = ?')
-    .get(request.tenantId)
+  const db = adaptDatabase(request.server.db)
+  const tenant = await db.get('SELECT plan, trial_ends_at FROM tenants WHERE id = ?', [request.tenantId])
 
   if (!tenant) {
     reply.code(401).send({ error: 'unauthorized' })

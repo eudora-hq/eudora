@@ -41,6 +41,8 @@ Edit `server/.env`:
 JWT_SECRET=any-random-string-32-chars-or-more
 ENCRYPTION_KEY=64-char-hex-string   # openssl rand -hex 32
 SELF_HOSTED=true
+# Optional: use Postgres instead of the default SQLite database
+# DATABASE_URL=postgresql://user:password@host:5432/eudora
 ```
 
 ```bash
@@ -226,9 +228,18 @@ Patterns detected:
 
 ---
 
-## Why SQLite
+## Database backends
 
-Audit logs are append-only. SQLite with database-level triggers and SHA-256 hash chains provides tamper-resistant storage without an external database server.
+SQLite remains the default for self-hosted deployments. Set `DATABASE_URL` to use Postgres for cloud deployments that need concurrent writers. Railway supplies `DATABASE_URL` automatically when its Postgres addon is provisioned.
+
+Railway backend environment checklist:
+
+- `JWT_SECRET`
+- `ENCRYPTION_KEY`
+- `CLIENT_URL`
+- `DATABASE_URL` (optional, required only when using Postgres)
+
+Audit logs remain append-only on both backends. SQLite uses database triggers and Postgres installs equivalent trigger functions during migration.
 
 Write attempts on existing audit rows are rejected at the trigger level, not the application level. This means the protection holds even if application code is compromised.
 

@@ -1,3 +1,4 @@
+import { adaptDatabase } from '../db/index.js'
 import { createHash } from 'crypto'
 import { nanoid } from 'nanoid'
 import { decrypt } from '../utils/encryption.js'
@@ -12,7 +13,7 @@ function sha256(value) {
   return createHash('sha256').update(String(value)).digest('hex')
 }
 
-function findProxyAgent(db, proxyKey) {
+async function findProxyAgent(db, proxyKey) {
   if (typeof proxyKey !== 'string' || !proxyKey.startsWith('eudora-proxy-')) {
     return null
   }
@@ -48,7 +49,7 @@ function validatePayload(body) {
 }
 
 export default async function ingestRoutes(fastify) {
-  const db = fastify.db
+  const db = adaptDatabase(fastify.db)
 
   async function authenticateIngest(request, reply) {
     const validationError = validatePayload(request.body)
@@ -57,7 +58,7 @@ export default async function ingestRoutes(fastify) {
       return
     }
 
-    const agent = findProxyAgent(db, request.body.proxy_key)
+    const agent = await findProxyAgent(db, request.body.proxy_key)
     if (!agent || agent.id !== request.body.agent_id) {
       reply.code(401).send({ error: 'unauthorized' })
       return
@@ -100,7 +101,7 @@ export default async function ingestRoutes(fastify) {
     const riskScore = dlpDetected ? 90 : patterns.length > 0 ? 40 : 0
     const humanRoot = agent.owner_type === 'human'
       ? agent.owner_id
-      : getHumanRoot(db, agent.id, agent.tenant_id)
+      : await getHumanRoot(db, agent.id, agent.tenant_id)
     const auditUser = humanRoot || agent.owner_id || await db.get(`
       SELECT id
       FROM users

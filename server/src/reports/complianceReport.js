@@ -8,6 +8,7 @@ import {
   verifyTimestamp,
 } from '../services/rfc3161.js'
 import { getArticle50Template } from '../services/article50Templates.js'
+import { adaptDatabase } from '../db/index.js'
 
 const SECURITY_ACTIONS = new Set([
   'guard_block',
@@ -60,7 +61,7 @@ function isFlaggedTrace(trace) {
     || trace.scope_result === 'violation'
 }
 
-function gatherTraceData(db, tenantId, dateFrom, dateTo, agentId, traceMode, events) {
+async function gatherTraceData(db, tenantId, dateFrom, dateTo, agentId, traceMode, events) {
   const agentQuery = agentId
     ? 'SELECT * FROM agents WHERE id = ? AND tenant_id = ?'
     : 'SELECT * FROM agents WHERE tenant_id = ? ORDER BY name ASC'
@@ -78,9 +79,9 @@ function gatherTraceData(db, tenantId, dateFrom, dateTo, agentId, traceMode, eve
     ORDER BY t.ts ASC
   `, [tenantId, dateFrom, dateTo])
 
-  return agents.map((agent) => {
+  const results = await Promise.all(agents.map(async (agent) => {
     const humanOwnerId = agent.owner_type === 'agent'
-      ? getHumanRoot(db, agent.id, tenantId)
+      ? await getHumanRoot(db, agent.id, tenantId)
       : agent.owner_id
     const owner = await db.get(
       'SELECT email FROM users WHERE id = ? AND tenant_id = ?'
@@ -131,7 +132,7 @@ function gatherTraceData(db, tenantId, dateFrom, dateTo, agentId, traceMode, eve
     }
 
     // Enrich traces — resolve context file IDs to filenames
-    function resolveContextItem(item) {
+    async function resolveContextItem(item) {
       const id = typeof item === 'string' ? item : (item.id || item.contextFileId)
       if (!id) return item
       try {
@@ -141,18 +142,18 @@ function gatherTraceData(db, tenantId, dateFrom, dateTo, agentId, traceMode, eve
         return item
       }
     }
-    const enrichedTraces = traces.map((trace) => {
+    const enrichedTraces = await Promise.all(traces.map(async (trace) => {
       try {
         const ctx = JSON.parse(trace.context_injected || '[]')
         if (!Array.isArray(ctx) || ctx.length === 0) return trace
         return {
           ...trace,
-          context_injected: JSON.stringify(ctx.map((item) => resolveContextItem(item))),
+          context_injected: JSON.stringify(await Promise.all(ctx.map(resolveContextItem))),
         }
       } catch {
         return trace
       }
-    })
+    }))
 
     return {
       agentId: agent.id,
@@ -166,10 +167,11 @@ function gatherTraceData(db, tenantId, dateFrom, dateTo, agentId, traceMode, eve
       truncated,
       totalCount: allTraces.length,
     }
-  }).filter((agent) => agent.totalRuns > 0)
+  }))
+  return results.filter((agent) => agent.totalRuns > 0)
 }
 
-function collectReportData(db, {
+async function collectReportData(db, {
   tenantId,
   dateFrom,
   dateTo,
@@ -181,10 +183,10 @@ function collectReportData(db, {
   sectorTemplate = 'general',
 }) {
   const tenant = await db.get('SELECT id, name FROM tenants WHERE id = ?', [tenantId])
-  const agents = await db.all(
+  const agentRows = await db.all(
     'SELECT * FROM agents WHERE tenant_id = ? ORDER BY name ASC'
   , [tenantId])
-    .filter((agent) => !agentId || agent.id === agentId)
+  const agents = agentRows.filter((agent) => !agentId || agent.id === agentId)
 
   const users = await db.all(
     'SELECT id, email, role FROM users WHERE tenant_id = ?'
@@ -192,10 +194,10 @@ function collectReportData(db, {
   const usersById = new Map(users.map((user) => [user.id, user]))
   const agentsById = new Map(agents.map((agent) => [agent.id, agent]))
 
-  const rawEvents = await db.all(
+  const rawEventRows = await db.all(
     'SELECT * FROM audit_log WHERE tenant_id = ? AND ts BETWEEN ? AND ? ORDER BY ts ASC'
   , [tenantId, dateFrom, dateTo])
-    .map((event) => ({
+  const rawEvents = rawEventRows.map((event) => ({
       ...event,
       metadata: parseJson(event.metadata),
     }))
@@ -233,7 +235,7 @@ function collectReportData(db, {
       })
       .filter(Boolean)
     : []
-  const traceData = gatherTraceData(
+  const traceData = await gatherTraceData(
     db,
     tenantId,
     dateFrom,
@@ -260,8 +262,8 @@ function collectReportData(db, {
   const averageRiskScore = events.length ? Math.round(totalRisk / events.length) : 0
 
   let verifiedCount = 0
-  const ownership = agents.map((agent) => {
-    const validation = validateOwnership(db, agent.owner_id, agent.owner_type, tenantId, agent.id)
+  const ownership = await Promise.all(agents.map(async (agent) => {
+    const validation = await validateOwnership(db, agent.owner_id, agent.owner_type, tenantId, agent.id)
     const chain = validation.chain || []
     let ownerDisplay = ''
     let chainDisplay = ''
@@ -276,12 +278,12 @@ function collectReportData(db, {
         ownerDisplay = user?.email || agent.owner_id
         chainDisplay = 'direct'
       } else {
-        const chainNames = chain.map((linkId) => {
+        const chainNames = await Promise.all(chain.map(async (linkId) => {
           const parentAgent = agentsById.get(linkId)
             || await db.get('SELECT name FROM agents WHERE id = ? AND tenant_id = ?', [linkId, tenantId])
           return parentAgent?.name || linkId
-        })
-        const humanRoot = getHumanRoot(db, agent.id, tenantId)
+        }))
+        const humanRoot = await getHumanRoot(db, agent.id, tenantId)
         const rootUser = usersById.get(humanRoot)
         const rootDisplay = rootUser?.email || humanRoot
         ownerDisplay = rootDisplay || agent.owner_id
@@ -301,7 +303,7 @@ function collectReportData(db, {
       depth: chain.length,
       verified: verified ? 'VERIFIED' : 'UNVERIFIED !',
     }
-  })
+  }))
 
   const humanAccountabilityPct = agents.length > 0
     ? Math.round((verifiedCount / agents.length) * 100)
@@ -730,7 +732,8 @@ function renderArticle50Pdf(data, reportHash) {
 }
 
 export async function generateComplianceReport(db, options) {
-  const data = collectReportData(db, options)
+  db = adaptDatabase(db)
+  const data = await collectReportData(db, options)
   const reportHash = hashReportData(data)
   const preliminaryPdfBuffer = await renderPdf(data, reportHash)
   let pdfBuffer

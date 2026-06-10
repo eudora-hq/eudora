@@ -9,6 +9,7 @@ import { enforceScope } from '../security/scopeEnforcer.js'
 import { score } from '../security/riskScorer.js'
 import { log, AUDIT_ACTIONS } from '../audit/auditLogger.js'
 import { createApprovalGate } from '../services/approvalGates.js'
+import { adaptDatabase } from '../db/index.js'
 
 export async function executeWorkflow(
   workflowId,
@@ -18,13 +19,13 @@ export async function executeWorkflow(
   initiatedByUserId = null,
   options = {}
 ) {
-  const workflow = db
-    .prepare('SELECT * FROM workflows WHERE id = ? AND tenant_id = ?')
-    .get(workflowId, tenantId)
+  const auditDb = db
+  db = adaptDatabase(db)
+  const workflow = await db.get('SELECT * FROM workflows WHERE id = ? AND tenant_id = ?', [workflowId, tenantId])
 
   if (!workflow) throw new Error('workflow_not_found')
 
-  const activeRunId = runId || getRunningRunId(db, workflowId, tenantId) || nanoid()
+  const activeRunId = runId || await getRunningRunId(db, workflowId, tenantId) || nanoid()
   const nodes = JSON.parse(workflow.nodes || '[]')
   const edges = JSON.parse(workflow.edges || '[]')
   const existingRun = await db.get(
@@ -39,6 +40,7 @@ export async function executeWorkflow(
     workflowId,
     runId: activeRunId,
     initiatedByUserId,
+    auditDb,
     resumeGateId: options.resumeGateId || null,
     urlFetchCount: 0,
     maxUrlFetches: 10,
@@ -142,7 +144,7 @@ export async function executeWorkflow(
         status: 'success',
         totalTokensUsed,
       },
-    }, db)
+    }, context.auditDb)
 
     return results
   } catch (err) {
@@ -162,15 +164,13 @@ export async function executeWorkflow(
         status: 'failed',
         error: err.message,
       },
-    }, db)
+    }, context.auditDb)
     throw err
   }
 }
 
-function getRunningRunId(db, workflowId, tenantId) {
-  const row = db
-    .prepare("SELECT id FROM workflow_runs WHERE workflow_id = ? AND tenant_id = ? AND status = 'running' ORDER BY started_at DESC LIMIT 1")
-    .get(workflowId, tenantId)
+async function getRunningRunId(db, workflowId, tenantId) {
+  const row = await db.get("SELECT id FROM workflow_runs WHERE workflow_id = ? AND tenant_id = ? AND status = 'running' ORDER BY started_at DESC LIMIT 1", [workflowId, tenantId])
   return row?.id || null
 }
 
@@ -250,9 +250,7 @@ async function executeNode(node, input, tenantId, db, context = {}) {
     }
   }
 
-  const agent = db
-    .prepare('SELECT * FROM agents WHERE id = ? AND tenant_id = ?')
-    .get(node.agentId, tenantId)
+  const agent = await db.get('SELECT * FROM agents WHERE id = ? AND tenant_id = ?', [node.agentId, tenantId])
 
   if (!agent) {
     return {
@@ -416,7 +414,7 @@ async function executeHumanApprovalNode(node, input, tenantId, db, context, star
       riskScore,
       prompt: safeInput,
       metadata: { gateId, workflowId: context.workflowId, nodeId: node.id, threshold },
-    }, db)
+    }, context.auditDb)
     return {
       nodeId: node.id,
       agentId,
@@ -429,7 +427,7 @@ async function executeHumanApprovalNode(node, input, tenantId, db, context, star
     }
   }
 
-  const approverUserIds = configuredApprovers(db, tenantId, agentId, config.approver_user_ids)
+  const approverUserIds = await configuredApprovers(db, tenantId, agentId, config.approver_user_ids)
   const gate = createApprovalGate(db, {
     tenantId,
     agentId,
@@ -470,16 +468,17 @@ function resolveApprovalAgentId(node, context) {
   return null
 }
 
-function configuredApprovers(db, tenantId, agentId, configured) {
+async function configuredApprovers(db, tenantId, agentId, configured) {
   if (Array.isArray(configured) && configured.length) return configured
   const owner = await db.get(
     'SELECT owner_id FROM agents WHERE id = ? AND tenant_id = ? AND owner_type = ?'
   , [agentId, tenantId, 'human'])
-  return await db.all(`
+  const approvers = await db.all(`
     SELECT id FROM users
     WHERE tenant_id = ? AND role IN ('owner', 'admin') AND id != ?
     ORDER BY CASE role WHEN 'owner' THEN 0 ELSE 1 END
-  `, [tenantId, owner?.owner_id || '']).map(row => row.id)
+  `, [tenantId, owner?.owner_id || ''])
+  return approvers.map(row => row.id)
 }
 
 async function executeFetchUrlNode(node, input, tenantId, db, context, startedAt) {
@@ -568,7 +567,7 @@ async function executeFetchUrlNode(node, input, tenantId, db, context, startedAt
         contentLength: text.length,
         workflowId: context.workflowId,
       },
-    }, db)
+    }, context.auditDb)
 
     return {
       nodeId: node.id,
@@ -692,7 +691,7 @@ async function executeFetchRssNode(node, input, tenantId, db, context, startedAt
         itemCount: items.length,
         workflowId: context.workflowId,
       },
-    }, db)
+    }, context.auditDb)
 
     return {
       nodeId: node.id,
@@ -862,7 +861,7 @@ async function executeFetchApiNode(node, input, tenantId, db, context, startedAt
         statusCode: response.status,
         workflowId: context.workflowId,
       },
-    }, db)
+    }, context.auditDb)
 
     if (!response.ok) {
       return {
@@ -959,7 +958,7 @@ async function executeWebhookOutNode(node, input, tenantId, db, context, started
         workflowId: context.workflowId,
         signed: Boolean(config.secret),
       },
-    }, db)
+    }, context.auditDb)
 
     if (!response.ok) {
       return {
@@ -1112,7 +1111,7 @@ async function executeSendEmailNode(node, input, tenantId, db, context, startedA
         messageId: data?.id,
         workflowId: context.workflowId,
       },
-    }, db)
+    }, context.auditDb)
 
     return {
       nodeId: node.id,

@@ -1,3 +1,4 @@
+import { adaptDatabase } from '../db/index.js'
 import { nanoid } from 'nanoid'
 import { canAccess, isUnderLimit } from '../billing/canAccess.js'
 import { executeWorkflow } from '../workflow/executionEngine.js'
@@ -18,13 +19,13 @@ function parseRun(row) {
 }
 
 export default async function workflowsRoutes(fastify) {
-  const db = fastify.db
+  const db = adaptDatabase(fastify.db)
 
   fastify.post('/', async (request, reply) => {
-    if (!canAccess(db, request.tenantId, 'workflow_builder')) {
+    if (!await canAccess(db, request.tenantId, 'workflow_builder')) {
       return reply.code(403).send({ error: 'upgrade_required' })
     }
-    if (!isUnderLimit(db, request.tenantId, request.tenant.plan, 'workflows')) {
+    if (!await isUnderLimit(db, request.tenantId, request.tenant.plan, 'workflows')) {
       return reply.code(403).send({ error: 'limit_reached' })
     }
 
@@ -46,24 +47,18 @@ export default async function workflowsRoutes(fastify) {
   })
 
   fastify.get('/', async (request) => {
-    return db
-      .prepare('SELECT * FROM workflows WHERE tenant_id = ? ORDER BY created_at DESC')
-      .all(request.tenantId)
+    return await db.all('SELECT * FROM workflows WHERE tenant_id = ? ORDER BY created_at DESC', [request.tenantId])
       .map(parseWorkflow)
   })
 
   fastify.get('/:id', async (request, reply) => {
-    const workflow = db
-      .prepare('SELECT * FROM workflows WHERE id = ? AND tenant_id = ?')
-      .get(request.params.id, request.tenantId)
+    const workflow = await db.get('SELECT * FROM workflows WHERE id = ? AND tenant_id = ?', [request.params.id, request.tenantId])
     if (!workflow) return reply.code(404).send({ error: 'workflow_not_found' })
     return parseWorkflow(workflow)
   })
 
   fastify.patch('/:id', async (request, reply) => {
-    const workflow = db
-      .prepare('SELECT * FROM workflows WHERE id = ? AND tenant_id = ?')
-      .get(request.params.id, request.tenantId)
+    const workflow = await db.get('SELECT * FROM workflows WHERE id = ? AND tenant_id = ?', [request.params.id, request.tenantId])
     if (!workflow) return reply.code(404).send({ error: 'workflow_not_found' })
 
     const { name, description, nodes, edges } = request.body || {}
@@ -87,9 +82,7 @@ export default async function workflowsRoutes(fastify) {
   })
 
   fastify.delete('/:id', async (request, reply) => {
-    const workflow = db
-      .prepare('SELECT id FROM workflows WHERE id = ? AND tenant_id = ?')
-      .get(request.params.id, request.tenantId)
+    const workflow = await db.get('SELECT id FROM workflows WHERE id = ? AND tenant_id = ?', [request.params.id, request.tenantId])
     if (!workflow) return reply.code(404).send({ error: 'workflow_not_found' })
 
     await db.query('DELETE FROM workflow_runs WHERE workflow_id = ? AND tenant_id = ?', [request.params.id, request.tenantId])
@@ -98,13 +91,11 @@ export default async function workflowsRoutes(fastify) {
   })
 
   fastify.post('/:id/run', async (request, reply) => {
-    if (!canAccess(db, request.tenantId, 'workflow_builder')) {
+    if (!await canAccess(db, request.tenantId, 'workflow_builder')) {
       return reply.code(403).send({ error: 'upgrade_required' })
     }
 
-    const workflow = db
-      .prepare('SELECT id FROM workflows WHERE id = ? AND tenant_id = ?')
-      .get(request.params.id, request.tenantId)
+    const workflow = await db.get('SELECT id FROM workflows WHERE id = ? AND tenant_id = ?', [request.params.id, request.tenantId])
     if (!workflow) return reply.code(404).send({ error: 'workflow_not_found' })
 
     const { trigger = 'manual' } = request.body || {}
@@ -124,19 +115,17 @@ export default async function workflowsRoutes(fastify) {
   })
 
   fastify.get('/:id/runs', async (request, reply) => {
-    const workflow = db
-      .prepare('SELECT id FROM workflows WHERE id = ? AND tenant_id = ?')
-      .get(request.params.id, request.tenantId)
+    const workflow = await db.get('SELECT id FROM workflows WHERE id = ? AND tenant_id = ?', [request.params.id, request.tenantId])
     if (!workflow) return reply.code(404).send({ error: 'workflow_not_found' })
 
     const { page = 1, limit = 20 } = request.query || {}
     const offset = (Number(page) - 1) * Number(limit)
-    const total = db
-      .prepare('SELECT COUNT(*) AS count FROM workflow_runs WHERE workflow_id = ? AND tenant_id = ?')
-      .get(request.params.id, request.tenantId).count
-    const runs = db
-      .prepare('SELECT * FROM workflow_runs WHERE workflow_id = ? AND tenant_id = ? ORDER BY started_at DESC LIMIT ? OFFSET ?')
-      .all(request.params.id, request.tenantId, Number(limit), offset)
+    const totalRow = await db.get(
+      'SELECT COUNT(*) AS count FROM workflow_runs WHERE workflow_id = ? AND tenant_id = ?',
+      [request.params.id, request.tenantId]
+    )
+    const total = totalRow.count
+    const runs = await db.all('SELECT * FROM workflow_runs WHERE workflow_id = ? AND tenant_id = ? ORDER BY started_at DESC LIMIT ? OFFSET ?', [request.params.id, request.tenantId, Number(limit), offset])
       .map(parseRun)
 
     return {

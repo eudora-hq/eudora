@@ -1,3 +1,4 @@
+import { adaptDatabase } from '../db/index.js'
 import { nanoid } from 'nanoid'
 import { encrypt, decrypt } from '../utils/encryption.js'
 import { refreshOAuthToken } from '../utils/oauthRefresh.js'
@@ -6,8 +7,8 @@ const REQUIRE_KEY = new Set(['anthropic', 'openai', 'gemini'])
 const REQUIRE_URL = new Set(['ollama', 'custom'])
 
 export default async function apiKeysRoutes(fastify) {
-  const db = fastify.db
-  const apiKeyColumns = new Set(await db.all('PRAGMA table_info(api_keys)').map((col) => col.name))
+  const db = adaptDatabase(fastify.db)
+  const apiKeyColumns = new Set((await db.columns('api_keys')).map((col) => col.name))
   const hasModelName = apiKeyColumns.has('model_name')
 
   // POST /api-keys
@@ -168,11 +169,9 @@ export default async function apiKeysRoutes(fastify) {
 
   // GET /api-keys
   fastify.get('/', async (request, reply) => {
-    const rows = db
-      .prepare(
+    const rows = await db.all(
         'SELECT id, provider, auth_type, label, base_url, default_model, key_encrypted IS NOT NULL AS has_key, created_at FROM api_keys WHERE tenant_id = ?'
-      )
-      .all(request.tenantId)
+      , [request.tenantId])
     return reply.send(rows)
   })
 
@@ -213,12 +212,16 @@ export default async function apiKeysRoutes(fastify) {
       normalizedUrl = base_url.replace(/\/+$/, '')
     }
 
+    const existing = await db.get(
+      'SELECT base_url, default_model FROM api_keys WHERE id = ? AND tenant_id = ?',
+      [id, request.tenantId]
+    )
     await db.query(`
       UPDATE api_keys
       SET base_url = ?, default_model = ?
       WHERE id = ? AND tenant_id = ?
-    `, [updatingBaseUrl ? normalizedUrl : db.prepare('SELECT base_url FROM api_keys WHERE id = ?').get(id).base_url,
-      updatingModel ? (default_model?.trim() || null) : db.prepare('SELECT default_model FROM api_keys WHERE id = ?').get(id).default_model,
+    `, [updatingBaseUrl ? normalizedUrl : existing.base_url,
+      updatingModel ? (default_model?.trim() || null) : existing.default_model,
       id,
       request.tenantId])
 

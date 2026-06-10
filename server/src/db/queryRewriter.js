@@ -52,8 +52,8 @@ export function transformSqliteDdl(sql) {
     .replace(/\bINTEGER\s+PRIMARY\s+KEY\s+AUTOINCREMENT\b/gi, 'SERIAL PRIMARY KEY')
     .replace(/\bREAL\b/gi, 'DOUBLE PRECISION')
     .replace(/\bBLOB\b/gi, 'BYTEA')
-    .replace(/\(datetime\('now'\)\)/gi, 'NOW()')
-    .replace(/\bdatetime\('now'\)/gi, 'NOW()')
+    .replace(/\(datetime\('now'\)\)/gi, '(NOW()::text)')
+    .replace(/\bdatetime\('now'\)/gi, 'NOW()::text')
 
   transformed = transformed.replace(
     /CREATE TRIGGER IF NOT EXISTS audit_log_no_update[\s\S]*?END;/gi,

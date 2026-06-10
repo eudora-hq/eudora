@@ -1,15 +1,33 @@
 import { TIER_LIMITS, FEATURES, FEATURES_BY_PLAN } from '../../../shared/constants/tierLimits.js'
+import { adaptDatabase } from '../db/index.js'
 
 export function normalizePlan(plan) {
   return plan || 'trial'
 }
 
 export function canAccess(db, tenantId, feature) {
+  db = adaptDatabase(db)
   if (process.env.SELF_HOSTED === 'true') return true
+  if (db.dialect === 'sqlite') {
+    const row = db.get(
+      'SELECT enabled FROM feature_flags WHERE tenant_id = ? AND feature = ?',
+      [tenantId, feature]
+    )
+    if (row) return row.enabled === 1
 
-  const row = db
-    .prepare('SELECT enabled FROM feature_flags WHERE tenant_id = ? AND feature = ?')
-    .get(tenantId, feature)
+    const tenant = db.get('SELECT plan FROM tenants WHERE id = ?', [tenantId])
+    const featuresForPlan = FEATURES_BY_PLAN[normalizePlan(tenant?.plan)] || {}
+    return featuresForPlan[feature] === true
+  }
+
+  return canAccessPostgres(db, tenantId, feature)
+}
+
+async function canAccessPostgres(db, tenantId, feature) {
+  const row = await db.get(
+    'SELECT enabled FROM feature_flags WHERE tenant_id = ? AND feature = ?',
+    [tenantId, feature]
+  )
   if (row) return row.enabled === 1
 
   const tenant = await db.get('SELECT plan FROM tenants WHERE id = ?', [tenantId])
@@ -18,6 +36,7 @@ export function canAccess(db, tenantId, feature) {
 }
 
 export function getUsage(db, tenantId, eventType, windowMs = null) {
+  db = adaptDatabase(db)
   let sql =
     'SELECT COALESCE(SUM(value), 0) AS total FROM usage_events WHERE tenant_id = ? AND event_type = ?'
   const params = [tenantId, eventType]
@@ -25,6 +44,14 @@ export function getUsage(db, tenantId, eventType, windowMs = null) {
     sql += ' AND ts > ?'
     params.push(Date.now() - windowMs)
   }
+  if (db.dialect === 'sqlite') {
+    const row = db.get(sql, params)
+    return row?.total ?? 0
+  }
+  return getUsagePostgres(db, sql, params)
+}
+
+async function getUsagePostgres(db, sql, params) {
   const row = await db.get(sql, params)
   return row?.total ?? 0
 }
@@ -37,25 +64,56 @@ export function isUnderLimit(db, tenantId, plan, metric) {
   const limit = TIER_LIMITS[normalizePlan(plan)]?.[metric]
   if (limit === undefined || limit === Infinity) return true
   const windowMs = metric === 'messages_per_day' ? 24 * 60 * 60 * 1000 : null
-  return getUsage(db, tenantId, metric, windowMs) < limit
+  const usage = getUsage(db, tenantId, metric, windowMs)
+  if (usage && typeof usage.then === 'function') {
+    return usage.then((value) => value < limit)
+  }
+  return usage < limit
 }
 
 export function isUnderAgentLimit(db, tenantId, plan) {
+  db = adaptDatabase(db)
   if (process.env.SELF_HOSTED === 'true') return true
 
   const limit = TIER_LIMITS[normalizePlan(plan)]?.agents
   if (limit === undefined || limit === Infinity) return true
-  const used = await db.get('SELECT COUNT(*) AS count FROM agents WHERE tenant_id = ?', [tenantId]).count
-  return used < limit
+  if (db.dialect === 'sqlite') {
+    const row = db.get('SELECT COUNT(*) AS count FROM agents WHERE tenant_id = ?', [tenantId])
+    return row.count < limit
+  }
+  return isUnderAgentLimitPostgres(db, tenantId, limit)
+}
+
+async function isUnderAgentLimitPostgres(db, tenantId, limit) {
+  const row = await db.get('SELECT COUNT(*) AS count FROM agents WHERE tenant_id = ?', [tenantId])
+  return row.count < limit
 }
 
 export function seedFeatureFlags(db, tenantId, plan) {
+  db = adaptDatabase(db)
   const featuresForPlan = FEATURES_BY_PLAN[normalizePlan(plan)] ?? {}
   const allFeatures = Object.values(FEATURES)
-  const upsert = db.prepare(
-    'INSERT OR REPLACE INTO feature_flags (tenant_id, feature, enabled) VALUES (?, ?, ?)'
-  )
+  if (db.dialect === 'sqlite') {
+    for (const feature of allFeatures) {
+      db.query(
+        `INSERT INTO feature_flags (tenant_id, feature, enabled)
+         VALUES (?, ?, ?)
+         ON CONFLICT(tenant_id, feature) DO UPDATE SET enabled = excluded.enabled`,
+        [tenantId, feature, featuresForPlan[feature] === true ? 1 : 0]
+      )
+    }
+    return
+  }
+  return seedFeatureFlagsPostgres(db, tenantId, featuresForPlan, allFeatures)
+}
+
+async function seedFeatureFlagsPostgres(db, tenantId, featuresForPlan, allFeatures) {
   for (const feature of allFeatures) {
-    upsert.run(tenantId, feature, featuresForPlan[feature] === true ? 1 : 0)
+    await db.query(
+      `INSERT INTO feature_flags (tenant_id, feature, enabled)
+       VALUES (?, ?, ?)
+       ON CONFLICT(tenant_id, feature) DO UPDATE SET enabled = excluded.enabled`,
+      [tenantId, feature, featuresForPlan[feature] === true ? 1 : 0]
+    )
   }
 }

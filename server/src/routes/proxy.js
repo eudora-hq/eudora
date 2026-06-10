@@ -1,3 +1,4 @@
+import { adaptDatabase } from '../db/index.js'
 import getDb from '../db/client.js'
 import { decrypt } from '../utils/encryption.js'
 import { sanitise } from '../security/sanitiser.js'
@@ -66,7 +67,7 @@ function getApiCredential(apiKey) {
 }
 
 export default async function proxyRoutes(fastify) {
-  const db = fastify.db ?? getDb()
+  const db = adaptDatabase(fastify.db ?? getDb())
 
   async function authenticateProxy(request, reply) {
     const auth = request.headers.authorization
@@ -114,7 +115,7 @@ export default async function proxyRoutes(fastify) {
     }
   }
 
-  function auditProxy(
+  async function auditProxy(
     agent,
     pipeline,
     blocked,
@@ -125,7 +126,7 @@ export default async function proxyRoutes(fastify) {
     const ownerChain = JSON.parse(agent.owner_chain || '[]')
     const humanRoot = agent.owner_type === 'human'
       ? agent.owner_id
-      : getHumanRoot(db, agent.id, agent.tenant_id)
+      : await getHumanRoot(db, agent.id, agent.tenant_id)
 
     const finalRiskScore = scopeResult
       ? score(pipeline.sanitiserResult, pipeline.guardResult, scopeResult)
@@ -208,7 +209,7 @@ export default async function proxyRoutes(fastify) {
     const shouldBlock = agent.interception_mode === 'block' && pipeline.guardResult.allowed === false
 
     if (shouldBlock) {
-      auditProxy(agent, pipeline, true, '', null, blockedModel)
+      await auditProxy(agent, pipeline, true, '', null, blockedModel)
       return reply.code(400).send(buildRefusal('openai'))
     }
 
@@ -232,7 +233,7 @@ export default async function proxyRoutes(fastify) {
 
     const data = await response.json()
     const responseText = extractOpenAIResponseText(data)
-    auditProxy(agent, pipeline, false, responseText, enforceScope(responseText, agent.purpose), resolvedModel)
+    await auditProxy(agent, pipeline, false, responseText, enforceScope(responseText, agent.purpose), resolvedModel)
     return reply.code(response.status).send(data)
   })
 
@@ -248,7 +249,7 @@ export default async function proxyRoutes(fastify) {
     const shouldBlock = agent.interception_mode === 'block' && pipeline.guardResult.allowed === false
 
     if (shouldBlock) {
-      auditProxy(agent, pipeline, true, '', null, blockedModel)
+      await auditProxy(agent, pipeline, true, '', null, blockedModel)
       return reply.code(400).send(buildRefusal('anthropic'))
     }
 
@@ -273,7 +274,7 @@ export default async function proxyRoutes(fastify) {
 
     const data = await response.json()
     const responseText = extractAnthropicResponseText(data)
-    auditProxy(agent, pipeline, false, responseText, enforceScope(responseText, agent.purpose), resolvedModel)
+    await auditProxy(agent, pipeline, false, responseText, enforceScope(responseText, agent.purpose), resolvedModel)
     return reply.code(response.status).send(data)
   })
 
@@ -291,7 +292,7 @@ export default async function proxyRoutes(fastify) {
     const shouldBlock = agent.interception_mode === 'block' && pipeline.guardResult.allowed === false
 
     if (shouldBlock) {
-      auditProxy(agent, pipeline, true, '', null, blockedModel)
+      await auditProxy(agent, pipeline, true, '', null, blockedModel)
       return reply.code(400).send(buildRefusal('openai'))
     }
 
@@ -314,7 +315,7 @@ export default async function proxyRoutes(fastify) {
 
     const data = await response.json()
     const responseText = extractOpenAIResponseText(data)
-    auditProxy(agent, pipeline, false, responseText, enforceScope(responseText, agent.purpose), resolvedModel)
+    await auditProxy(agent, pipeline, false, responseText, enforceScope(responseText, agent.purpose), resolvedModel)
     return reply.code(response.status).send(data)
   })
 
@@ -330,7 +331,7 @@ export default async function proxyRoutes(fastify) {
     const shouldBlock = agent.interception_mode === 'block' && pipeline.guardResult.allowed === false
 
     if (shouldBlock) {
-      auditProxy(agent, pipeline, true, '', null, blockedModel)
+      await auditProxy(agent, pipeline, true, '', null, blockedModel)
       return reply.code(400).send(buildRefusal('openai'))
     }
 
@@ -349,7 +350,7 @@ export default async function proxyRoutes(fastify) {
 
     const data = await response.json()
     const responseText = extractOpenAIResponseText(data)
-    auditProxy(agent, pipeline, false, responseText, enforceScope(responseText, agent.purpose), resolvedModel)
+    await auditProxy(agent, pipeline, false, responseText, enforceScope(responseText, agent.purpose), resolvedModel)
     return reply.code(response.status).send(data)
   })
 }

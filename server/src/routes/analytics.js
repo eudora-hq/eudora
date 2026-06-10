@@ -1,6 +1,13 @@
+import { adaptDatabase } from '../db/index.js'
 const DAY_MS = 24 * 60 * 60 * 1000
 
-function agentIdExpression(alias = 'audit_log') {
+function agentIdExpression(dialect, alias = 'audit_log') {
+  if (dialect === 'postgres') {
+    return `COALESCE(
+      (${alias}.metadata::jsonb)->>'agentId',
+      (${alias}.metadata::jsonb)->>'agent_id'
+    )`
+  }
   return `CASE
     WHEN json_valid(${alias}.metadata) THEN COALESCE(
       json_extract(${alias}.metadata, '$.agentId'),
@@ -28,8 +35,11 @@ function fillDailySeries(rows, days = 30) {
 }
 
 export default async function analyticsRoutes(fastify) {
-  const db = fastify.db
-  const auditAgentId = agentIdExpression('al')
+  const db = adaptDatabase(fastify.db)
+  const auditAgentId = agentIdExpression(db.dialect, 'al')
+  const dayExpression = db.dialect === 'postgres'
+    ? "to_char(to_timestamp(ts / 1000.0) AT TIME ZONE 'UTC', 'YYYY-MM-DD')"
+    : "date(ts / 1000, 'unixepoch')"
 
   fastify.get('/overview', async (request) => {
     const tenantId = request.tenantId
@@ -37,17 +47,17 @@ export default async function analyticsRoutes(fastify) {
     const last30d = now - 30 * DAY_MS
     const prev30d = last30d - 30 * DAY_MS
 
-    const total30d = await db.get(`
+    const total30d = (await db.get(`
       SELECT COUNT(*) AS count
       FROM audit_log
       WHERE tenant_id = ? AND ts > ?
-    `, [tenantId, last30d]).count
+    `, [tenantId, last30d])).count
 
-    const prevTotal30d = await db.get(`
+    const prevTotal30d = (await db.get(`
       SELECT COUNT(*) AS count
       FROM audit_log
       WHERE tenant_id = ? AND ts BETWEEN ? AND ?
-    `, [tenantId, prev30d, last30d]).count
+    `, [tenantId, prev30d, last30d])).count
 
     const eventSummary = await db.get(`
       SELECT
@@ -76,7 +86,7 @@ export default async function analyticsRoutes(fastify) {
 
     const dailyRows = await db.all(`
       SELECT
-        date(ts / 1000, 'unixepoch') AS day,
+        ${dayExpression} AS day,
         COUNT(*) AS interactions,
         SUM(CASE WHEN risk_score > 20 THEN 1 ELSE 0 END) AS risk_events
       FROM audit_log
@@ -142,18 +152,18 @@ export default async function analyticsRoutes(fastify) {
         SUM(CASE WHEN action = 'dlp_detected' THEN 1 ELSE 0 END) AS dlp
       FROM audit_log
       WHERE tenant_id = ?
-        AND ${agentIdExpression('audit_log')} = ?
+        AND ${agentIdExpression(db.dialect, 'audit_log')} = ?
         AND ts > ?
     `, [tenantId, agentId, last30d])
 
     const dailyRows = await db.all(`
       SELECT
-        date(ts / 1000, 'unixepoch') AS day,
+        ${dayExpression} AS day,
         COUNT(*) AS interactions,
         SUM(CASE WHEN risk_score > 20 THEN 1 ELSE 0 END) AS risk_events
       FROM audit_log
       WHERE tenant_id = ?
-        AND ${agentIdExpression('audit_log')} = ?
+        AND ${agentIdExpression(db.dialect, 'audit_log')} = ?
         AND ts > ?
       GROUP BY day
       ORDER BY day ASC

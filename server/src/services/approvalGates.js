@@ -3,6 +3,7 @@ import { sanitise } from '../security/sanitiser.js'
 import { createNotification } from '../utils/notify.js'
 import { sendApprovalRequiredEmail } from '../utils/email.js'
 import { log } from '../audit/auditLogger.js'
+import { adaptDatabase } from '../db/index.js'
 
 const APP_URL = process.env.CLIENT_URL || 'http://localhost:5173'
 
@@ -15,7 +16,7 @@ function sanitisedText(value) {
   return sanitise(String(value || '')).sanitisedText
 }
 
-function agentOwnerId(db, agentId, tenantId) {
+async function agentOwnerId(db, agentId, tenantId) {
   let currentId = agentId
   const visited = new Set()
 
@@ -32,7 +33,7 @@ function agentOwnerId(db, agentId, tenantId) {
   return null
 }
 
-function validApprovers(db, tenantId, userIds) {
+async function validApprovers(db, tenantId, userIds) {
   const uniqueIds = [...new Set((userIds || []).filter(Boolean))]
   if (!uniqueIds.length) return []
   const placeholders = uniqueIds.map(() => '?').join(', ')
@@ -42,7 +43,13 @@ function validApprovers(db, tenantId, userIds) {
   , [tenantId, ...uniqueIds])
 }
 
-export function createApprovalGate(db, {
+export function createApprovalGate(db, options) {
+  const adapted = adaptDatabase(db)
+  if (adapted.dialect === 'sqlite') return createApprovalGateSync(adapted, options)
+  return createApprovalGateAsync(adapted, options)
+}
+
+function createApprovalGateSync(db, {
   tenantId,
   agentId,
   runId,
@@ -58,7 +65,83 @@ export function createApprovalGate(db, {
   onTimeout = 'reject',
   approvalMessage = 'Review this agent action before it proceeds.',
 }) {
-  const approvers = validApprovers(db, tenantId, approverUserIds)
+  const uniqueIds = [...new Set((approverUserIds || []).filter(Boolean))]
+  const approvers = uniqueIds.length
+    ? db.all(
+        `SELECT id, email, name FROM users
+         WHERE tenant_id = ? AND id IN (${uniqueIds.map(() => '?').join(', ')})`,
+        [tenantId, ...uniqueIds]
+      )
+    : []
+  if (!approvers.length) {
+    const owner = db.get(
+      "SELECT id, email, name FROM users WHERE tenant_id = ? AND role = 'owner' LIMIT 1",
+      [tenantId]
+    )
+    if (!owner) throw new Error('no_valid_approvers')
+    approvers.push(owner)
+  }
+
+  const gateId = nanoid()
+  const timeout = clamp(timeoutMinutes, 1, 1440, 60)
+  const required = clamp(requiredApprovers, 1, Math.min(5, approvers.length), 1)
+  const expiresAt = new Date(Date.now() + timeout * 60 * 1000).toISOString()
+  const safePrompt = sanitisedText(agentPrompt)
+  const safeDraft = sanitisedText(agentResponseDraft)
+  const safeReason = sanitisedText(riskReason)
+  const nowIso = new Date().toISOString()
+
+  db.query(`
+    INSERT INTO approval_gates (
+      id, tenant_id, agent_id, run_id, workflow_id, node_id, status,
+      risk_score, risk_reason, agent_prompt, agent_response_draft,
+      required_approvers, current_approvals, timeout_minutes, on_timeout, expires_at
+    )
+    VALUES (?, ?, ?, ?, ?, ?, 'pending', ?, ?, ?, ?, ?, 0, ?, ?, ?)
+  `, [
+    gateId, tenantId, agentId, runId, workflowId, nodeId,
+    Math.round(Number(riskScore) || 0), safeReason, safePrompt, safeDraft,
+    required, timeout, onTimeout === 'escalate_owner' ? 'escalate_owner' : 'reject', expiresAt,
+  ])
+  for (const approver of approvers) {
+    db.query(
+      `INSERT INTO approval_gate_approvers (gate_id, user_id, notified_at)
+       VALUES (?, ?, ?)`,
+      [gateId, approver.id, nowIso]
+    )
+  }
+
+  const agent = db.get('SELECT name FROM agents WHERE id = ? AND tenant_id = ?', [agentId, tenantId])
+  for (const approver of approvers) {
+    void createNotification(db, {
+      tenantId,
+      userId: approver.id,
+      type: 'approval_required',
+      title: 'AI action requires approval',
+      message: `${agent?.name || 'An agent'} has a risk score of ${Math.round(Number(riskScore) || 0)}. ${approvalMessage}`,
+      actionUrl: `/approvals/${gateId}`,
+    })
+  }
+  return db.get('SELECT * FROM approval_gates WHERE id = ?', [gateId])
+}
+
+async function createApprovalGateAsync(db, {
+  tenantId,
+  agentId,
+  runId,
+  workflowId = null,
+  nodeId = null,
+  riskScore = 0,
+  riskReason = 'Risk threshold exceeded',
+  agentPrompt = '',
+  agentResponseDraft = '',
+  requiredApprovers = 1,
+  approverUserIds = [],
+  timeoutMinutes = 60,
+  onTimeout = 'reject',
+  approvalMessage = 'Review this agent action before it proceeds.',
+}) {
+  const approvers = await validApprovers(db, tenantId, approverUserIds)
   if (!approvers.length) {
     const owner = await db.get(
       "SELECT id, email, name FROM users WHERE tenant_id = ? AND role = 'owner' LIMIT 1"
@@ -76,8 +159,8 @@ export function createApprovalGate(db, {
   const safeReason = sanitisedText(riskReason)
   const nowIso = new Date().toISOString()
 
-  db.transaction(() => {
-    await db.query(`
+  await db.transaction(async tx => {
+    await tx.query(`
       INSERT INTO approval_gates (
         id, tenant_id, agent_id, run_id, workflow_id, node_id, status,
         risk_score, risk_reason, agent_prompt, agent_response_draft,
@@ -99,19 +182,21 @@ export function createApprovalGate(db, {
       onTimeout === 'escalate_owner' ? 'escalate_owner' : 'reject',
       expiresAt])
 
-    const insertApprover = db.prepare(`
-      INSERT INTO approval_gate_approvers (gate_id, user_id, notified_at)
-      VALUES (?, ?, ?)
-    `)
-    for (const approver of approvers) insertApprover.run(gateId, approver.id, nowIso)
-  })()
+    for (const approver of approvers) {
+      await tx.query(
+        `INSERT INTO approval_gate_approvers (gate_id, user_id, notified_at)
+         VALUES (?, ?, ?)`,
+        [gateId, approver.id, nowIso]
+      )
+    }
+  })
 
   const agent = await db.get(
     'SELECT name FROM agents WHERE id = ? AND tenant_id = ?'
   , [agentId, tenantId])
   const actionUrl = `/approvals/${gateId}`
   for (const approver of approvers) {
-    createNotification(db, {
+    await createNotification(db, {
       tenantId,
       userId: approver.id,
       type: 'approval_required',
@@ -133,7 +218,7 @@ export function createApprovalGate(db, {
 
   log({
     tenantId,
-    userId: agentOwnerId(db, agentId, tenantId),
+    userId: await agentOwnerId(db, agentId, tenantId),
     agentChain: [agentId],
     action: 'approval_required',
     riskScore,
@@ -145,11 +230,13 @@ export function createApprovalGate(db, {
   return await db.get('SELECT * FROM approval_gates WHERE id = ?', [gateId])
 }
 
-export function isAgentOwner(db, gate, userId) {
-  return agentOwnerId(db, gate.agent_id, gate.tenant_id) === userId
+export async function isAgentOwner(db, gate, userId) {
+  db = adaptDatabase(db)
+  return await agentOwnerId(db, gate.agent_id, gate.tenant_id) === userId
 }
 
-export function markGateBlocked(db, gate, status, reason, resolvedBy = null) {
+export async function markGateBlocked(db, gate, status, reason, resolvedBy = null) {
+  db = adaptDatabase(db)
   const resolvedAt = new Date().toISOString()
   await db.query(`
     UPDATE approval_gates
@@ -182,7 +269,7 @@ export function markGateBlocked(db, gate, status, reason, resolvedBy = null) {
 
   log({
     tenantId: gate.tenant_id,
-    userId: resolvedBy || agentOwnerId(db, gate.agent_id, gate.tenant_id),
+    userId: resolvedBy || await agentOwnerId(db, gate.agent_id, gate.tenant_id),
     initiatedByUserId: resolvedBy,
     agentChain: [gate.agent_id],
     action: 'approval_blocked',
@@ -194,6 +281,51 @@ export function markGateBlocked(db, gate, status, reason, resolvedBy = null) {
 }
 
 export function expireApprovalGates(db, now = new Date()) {
+  const adapted = adaptDatabase(db)
+  if (adapted.dialect === 'sqlite') {
+    const expired = adapted.all(
+      `SELECT * FROM approval_gates
+       WHERE status = 'pending' AND expires_at <= ?`,
+      [now.toISOString()]
+    )
+    for (const gate of expired) {
+      adapted.query(
+        `UPDATE approval_gates
+         SET status = 'timed_out', resolved_at = ?
+         WHERE id = ? AND tenant_id = ? AND status = 'pending'`,
+        [now.toISOString(), gate.id, gate.tenant_id]
+      )
+      if (gate.workflow_id) {
+        const run = adapted.get(
+          'SELECT node_results FROM workflow_runs WHERE id = ? AND tenant_id = ?',
+          [gate.run_id, gate.tenant_id]
+        )
+        const results = JSON.parse(run?.node_results || '[]')
+        results.push({
+          nodeId: gate.node_id,
+          agentId: gate.agent_id,
+          gateId: gate.id,
+          output: '',
+          tokensUsed: 0,
+          durationMs: 0,
+          status: 'timed_out',
+          blocked: true,
+          reason: 'Approval window expired',
+        })
+        adapted.query(
+          `UPDATE workflow_runs
+           SET status = 'failed', node_results = ?, completed_at = ?
+           WHERE id = ? AND tenant_id = ?`,
+          [JSON.stringify(results), Date.now(), gate.run_id, gate.tenant_id]
+        )
+      }
+    }
+    return expired.length
+  }
+  return expireApprovalGatesAsync(adapted, now)
+}
+
+async function expireApprovalGatesAsync(db, now = new Date()) {
   const expired = await db.all(`
     SELECT * FROM approval_gates
     WHERE status = 'pending' AND expires_at <= ?
@@ -201,7 +333,7 @@ export function expireApprovalGates(db, now = new Date()) {
 
   for (const gate of expired) {
     if (gate.on_timeout === 'escalate_owner') {
-      const actionOwner = agentOwnerId(db, gate.agent_id, gate.tenant_id)
+      const actionOwner = await agentOwnerId(db, gate.agent_id, gate.tenant_id)
       const tenantOwner = await db.get(`
         SELECT id, email, name FROM users
         WHERE tenant_id = ? AND role = 'owner' AND id != ?
@@ -219,7 +351,7 @@ export function expireApprovalGates(db, now = new Date()) {
           SET expires_at = ?, on_timeout = 'reject'
           WHERE id = ? AND tenant_id = ? AND status = 'pending'
         `, [nextExpiry, gate.id, gate.tenant_id])
-        createNotification(db, {
+        await createNotification(db, {
           tenantId: gate.tenant_id,
           userId: tenantOwner.id,
           type: 'approval_required',
@@ -240,12 +372,13 @@ export function expireApprovalGates(db, now = new Date()) {
         continue
       }
     }
-    markGateBlocked(db, gate, 'timed_out', 'Approval window expired')
+    await markGateBlocked(db, gate, 'timed_out', 'Approval window expired')
   }
   return expired.length
 }
 
 export async function sendApprovalReminders(db, now = new Date()) {
+  db = adaptDatabase(db)
   const threshold = new Date(now.getTime() - 30 * 60 * 1000).toISOString()
   const rows = await db.all(`
     SELECT aga.gate_id, aga.user_id, u.email, u.name,
@@ -283,7 +416,7 @@ export async function sendApprovalReminders(db, now = new Date()) {
 export function startApprovalMonitor(db, logger = console) {
   const interval = setInterval(async () => {
     try {
-      expireApprovalGates(db)
+      await expireApprovalGates(db)
       await sendApprovalReminders(db)
     } catch (err) {
       logger.error?.('[approval] monitor failed', err)

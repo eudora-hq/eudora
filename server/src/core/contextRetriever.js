@@ -1,4 +1,5 @@
 import getDb from '../db/client.js'
+import { adaptDatabase } from '../db/index.js'
 import { decrypt } from '../utils/encryption.js'
 import { generateEmbeddingWithMetadata, cosineSimilarity } from '../utils/embeddings.js'
 import { INTENT_TAG_MAP } from '../../../shared/constants/intentTypes.js'
@@ -57,11 +58,9 @@ async function getQueryEmbeddings(db, tenantId, query, models) {
 }
 
 export async function retrieve(agentId, intent, tenantId, query = '') {
-  const db = getDb()
+  const db = adaptDatabase(getDb())
 
-  const rows = db
-    .prepare('SELECT * FROM context_files WHERE agent_id = ? AND tenant_id = ?')
-    .all(agentId, tenantId)
+  const rows = await db.all('SELECT * FROM context_files WHERE agent_id = ? AND tenant_id = ?', [agentId, tenantId])
 
   if (rows.length === 0) {
     return { files: [], tokensEstimate: 0, excluded: [] }
