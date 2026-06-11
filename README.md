@@ -11,7 +11,7 @@ Works with OpenAI, Anthropic, Azure OpenAI, Ollama, and existing agents with min
 Self-hosted. MIT licensed.
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
-[![Tests](https://img.shields.io/badge/tests-417%20passing-brightgreen)](.github/workflows/ci.yml)
+[![Tests](https://img.shields.io/badge/tests-468%20passing-brightgreen)](.github/workflows/ci.yml)
 [![Self-hostable](https://img.shields.io/badge/self--host-free%20forever-blue)](docs/self-hosting.md)
 ![Node.js](https://img.shields.io/badge/node-22-339933?logo=node.js&logoColor=white)
 ![React](https://img.shields.io/badge/react-18-61DAFB?logo=react&logoColor=black)
@@ -225,6 +225,7 @@ Patterns detected:
 - Usage analytics dashboard
 - System health monitoring
 - Self-hosted setup wizard with Ollama detection
+- Eudora Tunnel — expose a local Ollama instance to cloud-hosted Eudora via frp, with hashed one-time keys, heartbeat auth, rate limiting, and stale tunnel detection
 
 ---
 
@@ -286,11 +287,11 @@ If you are not in a regulated industry, most of these features still apply: the 
 | Layer | Technology |
 |---|---|
 | Frontend | React 18, Vite, Tailwind CSS, Zustand, React Flow |
-| Backend | Node.js 22, Fastify, better-sqlite3 |
+| Backend | Node.js 22, Fastify, better-sqlite3, Postgres (opt-in) |
 | Security | AES-256-GCM, JWT, bcrypt, SHA-256 |
 | AI providers | Anthropic, OpenAI, Gemini, Ollama, Azure OpenAI, Custom |
 | Payments | Stripe (cloud only) |
-| Testing | Vitest (417 passing) |
+| Testing | Vitest (468 passing) |
 
 ---
 

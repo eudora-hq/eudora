@@ -2,6 +2,41 @@
 
 All notable changes to Eudora are documented here.
 
+## [1.1.0] — 2026-06-11
+
+### Added
+
+**Postgres Support (F032)**
+- Opt-in Postgres backend via `DATABASE_URL` environment variable — SQLite remains the default
+- Full DDL transformation layer: SQLite → Postgres (AUTOINCREMENT→SERIAL, INTEGER→BIGINT, triggers→plpgsql functions)
+- Placeholder rewriting (`?` → `$N`) with quote and comment awareness
+- Labeled dollar-quote tags for plpgsql functions to avoid JavaScript string replacement collisions
+- INTEGER columns mapped to BIGINT to safely hold millisecond timestamps
+- Idempotent migration runner for both backends
+- Railway `DATABASE_URL` auto-provisioning documented
+
+**Eudora Tunnel (frp Integration)**
+- `/v1/tunnels` CRUD API with hashed one-time keys (plain key shown once, bcrypt hash stored)
+- Heartbeat authentication and rate limiting (10 requests/minute per tunnel)
+- Stale tunnel monitor — marks tunnels inactive after 90 seconds without a heartbeat
+- Generated `frpc.toml` config and install command on tunnel creation
+- Tunnel connection provider routed through `{id}.tunnel.geteudora.com`
+- Tunnel management UI with gated sidebar navigation
+- 8 tunnel tests covering the full lifecycle
+
+**TypeScript Migration (F033)**
+- Incremental TypeScript coverage for `audit/auditLogger.ts`, `reports/complianceReport.ts`, `routes/proxy.ts`
+- Typed audit, report, and proxy interfaces
+- `tsconfig.json` with `allowImportingTsExtensions` for Node 22 native TS strip
+- CI typecheck step, Node 22 upgrade
+- No suppression directives (`@ts-ignore`, `@ts-expect-error`)
+
+**Compliance Report Improvements**
+- Article 50 report now includes User Input column alongside AI Output
+- `inputSummary` captured from proxy requests and stored in audit metadata
+- PDF column layout fixed to fit within page width (600px → 515px total)
+- RFC 3161 timestamp status rendered as `VERIFIED` (removed stray checkmark glyph that rendered as apostrophe in Helvetica)
+
 ## [1.0.0] — 2026
 
 ### Added

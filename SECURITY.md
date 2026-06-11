@@ -38,3 +38,5 @@ You will receive a response within 48 hours. If the vulnerability is confirmed:
 **Prompt injection defence:** 24 patterns covering instruction override, role switch, jailbreak, extraction, system impersonation, and safety bypass.
 
 **Rate limiting:** Per-tenant rate limiting on all authenticated routes.
+
+**Tunnel keys:** One-time tunnel keys are shown to the user exactly once and stored only as a bcrypt hash. Heartbeat authentication verifies against the hash. Rate limited to 10 requests per minute per tunnel.

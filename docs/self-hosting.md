@@ -4,7 +4,7 @@ Eudora is free to self-host forever. This guide covers everything you need to ru
 
 ## Prerequisites
 
-- Node.js 18 or higher
+- Node.js 22 or higher
 - npm 9 or higher
 - 512MB RAM minimum (1GB recommended for running local models via Ollama)
 - Linux, macOS, or Windows (WSL2 recommended on Windows)
@@ -223,6 +223,7 @@ docker-compose up -d
 | `REFRESH_TOKEN_EXPIRES_DAYS` | No | Refresh token lifetime in days. Default: `7` |
 | `ENCRYPTION_KEY` | Yes | 64-char hex string. Generate with `openssl rand -hex 32` |
 | `DB_PATH` | No | SQLite file path. Default: `./eudora.db` |
+| `DATABASE_URL` | No | Postgres connection string. When set, Postgres is used instead of SQLite. Example: `postgresql://user:pass@host:5432/eudora` |
 | `PORT` | No | Server port. Default: `3001` |
 | `CLIENT_URL` | No | Frontend URL for CORS and Stripe redirects. Default: `http://localhost:5173` |
 | `API_URL` | No | Public backend URL used for Google and GitHub OAuth callbacks. Default: `http://localhost:3001` |
@@ -262,7 +263,7 @@ npm run build
 
 ## Data backup
 
-The entire database is a single SQLite file. Back it up by copying it:
+**SQLite (default):** The entire database is a single file. Back it up by copying it:
 
 ```bash
 cp server/eudora.db server/eudora.db.backup.$(date +%Y%m%d)
@@ -273,6 +274,12 @@ For automated backups with PM2:
 ```bash
 # Add to crontab
 0 2 * * * cp /data/eudora.db /backups/eudora.db.$(date +\%Y\%m\%d)
+```
+
+**Postgres:** Use `pg_dump`:
+
+```bash
+pg_dump $DATABASE_URL > eudora_backup_$(date +%Y%m%d).sql
 ```
 
 ## Troubleshooting

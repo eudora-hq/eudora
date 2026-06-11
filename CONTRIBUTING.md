@@ -18,6 +18,12 @@ Run tests:
 cd server && npm run test
 ```
 
+Run typecheck:
+
+```bash
+cd server && npm run typecheck
+```
+
 Run lint:
 
 ```bash
@@ -51,9 +57,9 @@ eudora/
 
 ## Architecture decisions
 
-**Why SQLite?**
+**Why SQLite as the default?**
 
-Single-file database, zero configuration, sufficient for most self-hosted deployments. The architecture is designed so SQLite can be swapped for PostgreSQL with minimal changes.
+Single-file database, zero configuration, sufficient for most self-hosted deployments. Set `DATABASE_URL` to use Postgres for cloud or multi-writer deployments — migrations, DDL transformation, and placeholder rewriting are handled automatically.
 
 **Why append-only audit log?**
 
@@ -68,7 +74,7 @@ DORA requires that every automated AI action be traceable to a human decision-ma
 1. Fork the repository
 2. Create a feature branch: `git checkout -b feature/your-feature`
 3. Write tests for new functionality
-4. Run `cd server && npm run test && npm run lint` — must pass
+4. Run `cd server && npm run test && npm run typecheck && npm run lint` — must pass
 5. Submit a pull request with a clear description
 
 ## What we're looking for
