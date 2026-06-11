@@ -220,6 +220,14 @@ async function collectReportData(db, {
             : `AI output recorded for ${event.action}`)
         ).substring(0, 200)
 
+        const inputSummary = String(
+          event.metadata?.inputSummary
+          || event.metadata?.userMessage
+          || (event.prompt_hash
+            ? `User input recorded with SHA-256 hash ${event.prompt_hash}`
+            : '')
+        ).substring(0, 200)
+
         return {
           agentId: resolvedAgentId,
           runId: event.metadata?.runId || event.id,
@@ -227,6 +235,7 @@ async function collectReportData(db, {
           disclosureMade: event.metadata?.disclosureMade === false ? 0 : 1,
           disclosureMethod: event.metadata?.disclosureMethod || 'logged_only',
           disclosureStatement: article50Template.disclosureStatement,
+          inputSummary,
           outputSummary,
           riskScore: Number(event.risk_score || 0),
           sectorTemplate,
@@ -424,7 +433,7 @@ function renderTimestampSection(doc, timestamp = {}) {
   doc.font('Helvetica').fontSize(11).fillColor('#111111')
 
   if (timestamp.status === 'ok') {
-    doc.text('Status:     VERIFIED ✓', 40, doc.y, { width: 515 })
+    doc.text('Status:     VERIFIED', 40, doc.y, { width: 515 })
     doc.text(`Time:       ${timestamp.time || 'Unknown'}`, 40, doc.y, { width: 515 })
     doc.text(`Authority:  ${timestamp.tsa || TSA_URL}`, 40, doc.y, { width: 515 })
     doc.text('Standard:   RFC 3161 — Trusted Timestamp Protocol', 40, doc.y, { width: 515 })
@@ -661,8 +670,8 @@ function renderArticle50Pdf(data, reportHash) {
     sectionTitle(doc, 'Interactions Covered')
     tableRow(
       doc,
-      ['Timestamp', 'Agent ID', 'Disclosure', 'Risk', 'Output Summary'],
-      [105, 85, 110, 40, 175],
+      ['Timestamp', 'Agent ID', 'Disclosure', 'Risk', 'User Input', 'Output Summary'],
+      [100, 70, 95, 35, 105, 110],
       { header: true, height: 18 }
     )
     if (data.article50Records.length === 0) {
@@ -680,9 +689,10 @@ function renderArticle50Pdf(data, reportHash) {
             record.agentId,
             `${record.disclosureMade ? 'YES' : 'NO'} — ${record.disclosureMethod}`,
             record.riskScore,
-            record.outputSummary.substring(0, 200),
+            record.inputSummary || '—',
+            record.outputSummary,
           ],
-          [105, 85, 110, 40, 175]
+          [100, 70, 95, 35, 105, 110]
         )
       })
     }

@@ -112,6 +112,7 @@ export default async function proxyRoutes(fastify) {
       riskScore,
       startedAt,
       runId: nanoid(),
+      userMessage,
     }
   }
 
@@ -148,6 +149,7 @@ export default async function proxyRoutes(fastify) {
         interceptionMode: agent.interception_mode,
         disclosureMade: true,
         disclosureMethod: 'system_prompt',
+        inputSummary: String(pipeline.userMessage || '').substring(0, 200),
         outputSummary: responseText.substring(0, 200),
         injectionDetected: pipeline.sanitiserResult.flagged,
         patterns: pipeline.sanitiserResult.patterns,
