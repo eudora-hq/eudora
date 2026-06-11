@@ -1,49 +1,23 @@
-import { adaptDatabase } from '../db/index.js'
-import getDb from '../db/client.js'
-import { decrypt } from '../utils/encryption.js'
-import { sanitise } from '../security/sanitiser.js'
-import { guard } from '../security/guardLayer.js'
-import { score } from '../security/riskScorer.js'
-import { enforceScope } from '../security/scopeEnforcer.js'
+import { adaptDatabase } from '../db/index.ts'
+import getDb from '../db/client.ts'
+import { decrypt } from '../utils/encryption.ts'
+import { sanitise } from '../security/sanitiser.ts'
+import { guard } from '../security/guardLayer.ts'
+import { score } from '../security/riskScorer.ts'
+import { enforceScope } from '../security/scopeEnforcer.ts'
 import { log } from '../audit/auditLogger.ts'
-import { record } from '../audit/traceRecorder.js'
-import { getHumanRoot } from '../utils/ownershipChain.js'
+import { record } from '../audit/traceRecorder.ts'
+import { getHumanRoot } from '../utils/ownershipChain.ts'
 import { nanoid } from 'nanoid'
-import { resolveModel } from '../utils/resolveModel.js'
-import { tunnelBaseUrl } from '../services/tunnelService.js'
+import { resolveModel } from '../utils/resolveModel.ts'
 
-export interface ProxyRequest {
-  tenant_id: string
-  agent_id: string
-  session_id: string
-  messages: Array<{ role: string; content: string }>
-  model?: string
-}
-
-export interface ProxyResult {
-  blocked: boolean
-  block_reason?: string
-  content?: string
-  risk_score: number
-  request_id: string
-}
-
-interface ProxyMessageBody {
-  messages?: Array<{
-    role?: string
-    content?: string | Array<{ type?: string; text?: string }>
-  }>
-  model?: string
-  [key: string]: unknown
-}
-
-function extractOpenAIMessage(body: ProxyMessageBody) {
+function extractOpenAIMessage(body) {
   const messages = body.messages || []
   const last = messages[messages.length - 1]
   return last?.content || ''
 }
 
-function extractAnthropicMessage(body: ProxyMessageBody): string {
+function extractAnthropicMessage(body) {
   const messages = body.messages || []
   const last = messages[messages.length - 1]
   if (typeof last?.content === 'string') return last.content
@@ -53,16 +27,16 @@ function extractAnthropicMessage(body: ProxyMessageBody): string {
   return ''
 }
 
-function extractOpenAIResponseText(data: any): string {
+function extractOpenAIResponseText(data) {
   return data?.choices?.[0]?.message?.content || ''
 }
 
-function extractAnthropicResponseText(data: any): string {
+function extractAnthropicResponseText(data) {
   const first = data?.content?.[0]
   return typeof first?.text === 'string' ? first.text : ''
 }
 
-function buildRefusal(providerName: string): Record<string, unknown> {
+function buildRefusal(providerName) {
   if (providerName === 'anthropic') {
     return {
       id: `msg_eudora_${nanoid(8)}`,
@@ -87,15 +61,15 @@ function buildRefusal(providerName: string): Record<string, unknown> {
   }
 }
 
-function getApiCredential(apiKey: any): string | null {
+function getApiCredential(apiKey) {
   if (!apiKey?.key_encrypted) return null
   return decrypt(apiKey.key_encrypted, apiKey.key_iv)
 }
 
-export default async function proxyRoutes(fastify: any): Promise<void> {
+export default async function proxyRoutes(fastify) {
   const db = adaptDatabase(fastify.db ?? getDb())
 
-  async function authenticateProxy(request: any, reply: any): Promise<unknown> {
+  async function authenticateProxy(request, reply) {
     const auth = request.headers.authorization
     if (!auth || !auth.startsWith('Bearer eudora-proxy-')) {
       return reply.code(401).send({
@@ -125,7 +99,7 @@ export default async function proxyRoutes(fastify: any): Promise<void> {
     request.tenantId = agent.tenant_id
   }
 
-  function runCompliancePipeline(agent: any, userMessage: any, providerName: string) {
+  function runCompliancePipeline(agent, userMessage, providerName) {
     const startedAt = Date.now()
     const sanitiserResult = sanitise(userMessage)
     const guardResult = guard(sanitiserResult, agent.purpose)
@@ -145,11 +119,11 @@ export default async function proxyRoutes(fastify: any): Promise<void> {
   async function auditProxy(
     agent: any,
     pipeline: any,
-    blocked: boolean,
-    responseText = '',
+    blocked: any,
+    responseText: any = '',
     scopeResult: any = null,
-    resolvedModel: string | null = null
-  ): Promise<void> {
+    resolvedModel: any = null
+  ) {
     const ownerChain = JSON.parse(agent.owner_chain || '[]')
     const humanRoot = agent.owner_type === 'human'
       ? agent.owner_id
@@ -194,7 +168,7 @@ export default async function proxyRoutes(fastify: any): Promise<void> {
     }, db)
   }
 
-  async function getAgentApiKey(agent: any, reply: any): Promise<any | null> {
+  async function getAgentApiKey(agent, reply) {
     const apiKey = await db.get(
       'SELECT * FROM api_keys WHERE id = ? AND tenant_id = ?'
     , [agent.api_key_id, agent.tenant_id])
@@ -217,21 +191,17 @@ export default async function proxyRoutes(fastify: any): Promise<void> {
     return apiKey
   }
 
-  function proxyModel(
-    agent: any,
-    apiKey: any,
-    requestModel: string | null = null
-  ): string | null {
+  function proxyModel(agent, apiKey, requestModel = null) {
     return resolveModel(agent, apiKey) || requestModel || null
   }
 
-  function endpoint(base: string, path: string): string {
+  function endpoint(base, path) {
     return `${String(base).replace(/\/+$/, '')}${path}`
   }
 
   fastify.post('/openai/v1/chat/completions', {
     preHandler: authenticateProxy,
-  }, async (request: any, reply: any) => {
+  }, async (request, reply) => {
     const agent = request.proxyAgent
     const pipeline = runCompliancePipeline(agent, extractOpenAIMessage(request.body), 'openai')
     const configuredConnection = agent.api_key_id
@@ -250,9 +220,7 @@ export default async function proxyRoutes(fastify: any): Promise<void> {
     const decryptedKey = getApiCredential(apiKey)
     const resolvedModel = proxyModel(agent, apiKey, request.body?.model)
     const body = resolvedModel ? { ...request.body, model: resolvedModel } : request.body
-    const targetUrl = apiKey.provider === 'tunnel'
-      ? endpoint(tunnelBaseUrl(apiKey.tunnel_id), '/v1/chat/completions')
-      : agent.endpoint_url
+    const targetUrl = agent.endpoint_url
       ? endpoint(agent.endpoint_url, '/v1/chat/completions')
       : 'https://api.openai.com/v1/chat/completions'
 
@@ -273,7 +241,7 @@ export default async function proxyRoutes(fastify: any): Promise<void> {
 
   fastify.post('/anthropic/v1/messages', {
     preHandler: authenticateProxy,
-  }, async (request: any, reply: any) => {
+  }, async (request, reply) => {
     const agent = request.proxyAgent
     const pipeline = runCompliancePipeline(agent, extractAnthropicMessage(request.body), 'anthropic')
     const configuredConnection = agent.api_key_id
@@ -314,7 +282,7 @@ export default async function proxyRoutes(fastify: any): Promise<void> {
 
   fastify.post('/azure/:resource/openai/deployments/:model/chat/completions', {
     preHandler: authenticateProxy,
-  }, async (request: any, reply: any) => {
+  }, async (request, reply) => {
     const agent = request.proxyAgent
     const { resource, model } = request.params
     const apiVersion = request.query['api-version'] || '2024-02-01'
@@ -342,8 +310,8 @@ export default async function proxyRoutes(fastify: any): Promise<void> {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
-        'api-key': decryptedKey as string,
-      },
+        'api-key': decryptedKey,
+      } as any,
       body: JSON.stringify(request.body),
     })
 
@@ -355,7 +323,7 @@ export default async function proxyRoutes(fastify: any): Promise<void> {
 
   fastify.post('/custom/:agentId/v1/chat/completions', {
     preHandler: authenticateProxy,
-  }, async (request: any, reply: any) => {
+  }, async (request, reply) => {
     const agent = request.proxyAgent
     const pipeline = runCompliancePipeline(agent, extractOpenAIMessage(request.body), 'custom')
     const configuredConnection = agent.api_key_id
