@@ -28,6 +28,7 @@ import OAuthCallback from './pages/OAuthCallback'
 import Analytics from './pages/Analytics'
 import Approvals from './pages/Approvals'
 import Compliance from './pages/Compliance'
+import Tunnels from './pages/Tunnels'
 
 function ProtectedRoute({ children }) {
   const { isAuthenticated, user } = useAuthStore()
@@ -128,6 +129,7 @@ export default function App() {
           <Route path="approvals" element={<Approvals />} />
           <Route path="approvals/:id" element={<Approvals />} />
           <Route path="compliance" element={<Compliance />} />
+          <Route path="tunnels" element={<Tunnels />} />
         </Route>
         <Route path="*" element={<Navigate to="/login" replace />} />
       </Routes>

@@ -55,6 +55,7 @@ export function transformSqliteDdl(sql) {
     .replace(/\bBLOB\b/gi, 'BYTEA')
     .replace(/\(datetime\('now'\)\)/gi, '(NOW()::text)')
     .replace(/\bdatetime\('now'\)/gi, 'NOW()::text')
+    .replace(/\(unixepoch\(\)\)/gi, '(EXTRACT(EPOCH FROM NOW())::BIGINT)')
 
   transformed = transformed.replace(
     /CREATE TRIGGER IF NOT EXISTS audit_log_no_update[\s\S]*?END;/gi,

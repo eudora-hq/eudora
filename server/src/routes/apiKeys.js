@@ -2,6 +2,7 @@ import { adaptDatabase } from '../db/index.js'
 import { nanoid } from 'nanoid'
 import { encrypt, decrypt } from '../utils/encryption.js'
 import { refreshOAuthToken } from '../utils/oauthRefresh.js'
+import { tunnelBaseUrl } from '../services/tunnelService.js'
 
 const REQUIRE_KEY = new Set(['anthropic', 'openai', 'gemini'])
 const REQUIRE_URL = new Set(['ollama', 'custom'])
@@ -10,10 +11,20 @@ export default async function apiKeysRoutes(fastify) {
   const db = adaptDatabase(fastify.db)
   const apiKeyColumns = new Set((await db.columns('api_keys')).map((col) => col.name))
   const hasModelName = apiKeyColumns.has('model_name')
+  const hasDefaultModel = apiKeyColumns.has('default_model')
+  const hasTunnelId = apiKeyColumns.has('tunnel_id')
 
   // POST /api-keys
   fastify.post('/', async (request, reply) => {
-    const { provider, auth_type = 'key', label, key, base_url, default_model } = request.body || {}
+    const {
+      provider,
+      auth_type = 'key',
+      label,
+      key,
+      base_url,
+      default_model,
+      tunnel_id,
+    } = request.body || {}
 
     if (!provider) return reply.code(400).send({ error: 'provider is required' })
     if (!label) return reply.code(400).send({ error: 'label is required' })
@@ -27,6 +38,15 @@ export default async function apiKeysRoutes(fastify) {
     if (REQUIRE_URL.has(provider) && !base_url) {
       return reply.code(400).send({ error: `base_url is required for provider ${provider}` })
     }
+    if (provider === 'tunnel') {
+      if (!hasTunnelId) return reply.code(503).send({ error: 'tunnels_not_available' })
+      if (!tunnel_id) return reply.code(400).send({ error: 'tunnel_id is required' })
+      const tunnel = await db.get(
+        'SELECT id FROM tunnels WHERE id = ? AND tenant_id = ?',
+        [tunnel_id, request.tenantId]
+      )
+      if (!tunnel) return reply.code(404).send({ error: 'tunnel_not_found' })
+    }
 
     let key_encrypted = null
     let key_iv = null
@@ -38,27 +58,34 @@ export default async function apiKeysRoutes(fastify) {
 
     const id = nanoid()
     const created_at = Date.now()
-    if (hasModelName && apiKeyColumns.has('default_model')) {
-      await db.query(
-        `INSERT INTO api_keys
-           (id, tenant_id, user_id, provider, auth_type, label, base_url, key_encrypted, key_iv, model_name, default_model, created_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
-      , [id, request.tenantId, request.user.userId,
-        provider, auth_type, label,
-        base_url ?? null, key_encrypted, key_iv,
-        request.body.model_name ?? null,
-        default_model?.trim() || null,
-        created_at])
-    } else {
-      await db.query(
-        `INSERT INTO api_keys
-           (id, tenant_id, user_id, provider, auth_type, label, base_url, key_encrypted, key_iv, created_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
-      , [id, request.tenantId, request.user.userId,
-        provider, auth_type, label,
-        base_url ?? null, key_encrypted, key_iv,
-        created_at])
+    const columns = [
+      'id', 'tenant_id', 'user_id', 'provider', 'auth_type', 'label',
+      'base_url', 'key_encrypted', 'key_iv',
+    ]
+    const values = [
+      id, request.tenantId, request.user.userId, provider, auth_type, label,
+      base_url ?? null, key_encrypted, key_iv,
+    ]
+    if (hasModelName) {
+      columns.push('model_name')
+      values.push(request.body.model_name ?? null)
     }
+    if (hasDefaultModel) {
+      columns.push('default_model')
+      values.push(default_model?.trim() || null)
+    }
+    if (hasTunnelId) {
+      columns.push('tunnel_id')
+      values.push(provider === 'tunnel' ? tunnel_id : null)
+    }
+    columns.push('created_at')
+    values.push(created_at)
+
+    await db.query(
+      `INSERT INTO api_keys (${columns.join(', ')})
+       VALUES (${columns.map(() => '?').join(', ')})`,
+      values
+    )
 
     return reply.code(201).send({
       id,
@@ -67,6 +94,7 @@ export default async function apiKeysRoutes(fastify) {
       label,
       base_url: base_url ?? null,
       default_model: default_model?.trim() || null,
+      ...(hasTunnelId ? { tunnel_id: provider === 'tunnel' ? tunnel_id : null } : {}),
       created_at,
     })
   })
@@ -154,6 +182,9 @@ export default async function apiKeysRoutes(fastify) {
       } else if (row.provider === 'ollama') {
         res = await fetch(`${row.base_url}/api/tags`)
         success = res.ok
+      } else if (row.provider === 'tunnel') {
+        res = await fetch(`${tunnelBaseUrl(row.tunnel_id)}/api/tags`)
+        success = res.ok
       } else if (row.provider === 'custom') {
         res = await fetch(`${row.base_url}/v1/models`)
         success = res.ok
@@ -169,8 +200,11 @@ export default async function apiKeysRoutes(fastify) {
 
   // GET /api-keys
   fastify.get('/', async (request, reply) => {
+    const tunnelColumn = hasTunnelId ? ', tunnel_id' : ''
     const rows = await db.all(
-        'SELECT id, provider, auth_type, label, base_url, default_model, key_encrypted IS NOT NULL AS has_key, created_at FROM api_keys WHERE tenant_id = ?'
+        `SELECT id, provider, auth_type, label, base_url, default_model${tunnelColumn},
+          key_encrypted IS NOT NULL AS has_key, created_at
+         FROM api_keys WHERE tenant_id = ?`
       , [request.tenantId])
     return reply.send(rows)
   })

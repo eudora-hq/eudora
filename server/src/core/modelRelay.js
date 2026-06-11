@@ -3,6 +3,7 @@ import { adaptDatabase } from '../db/index.js'
 import { decrypt } from '../utils/encryption.js'
 import { refreshOAuthToken } from '../utils/oauthRefresh.js'
 import { resolveModel } from '../utils/resolveModel.js'
+import { tunnelBaseUrl } from '../services/tunnelService.js'
 
 export class InvalidApiKeyError extends Error {
   constructor(provider) {
@@ -131,11 +132,14 @@ export async function relay(composedPrompt, apiKeyId, tenantId, modelOverride = 
       total: data.usageMetadata.totalTokenCount,
     }
 
-  } else if (provider === 'ollama') {
+  } else if (provider === 'ollama' || provider === 'tunnel') {
     resolvedModel = configuredModel || activeRow.model_name || 'qwen2.5-coder:14b'
     const headers = { 'content-type': 'application/json' }
     if (credential) headers.Authorization = `Bearer ${credential}`
-    const res = await fetch(`${activeRow.base_url}/api/chat`, {
+    const baseUrl = provider === 'tunnel'
+      ? tunnelBaseUrl(activeRow.tunnel_id)
+      : activeRow.base_url
+    const res = await fetch(`${baseUrl}/api/chat`, {
       method: 'POST',
       headers,
       body: JSON.stringify({

@@ -5,7 +5,7 @@ import api from '../api/client';
 import { PlanModal } from '../components/PlanModal';
 import { useSelfHosted } from '../hooks/useSelfHosted';
 
-const PROVIDERS = ['anthropic', 'openai', 'gemini', 'ollama', 'custom'];
+const PROVIDERS = ['anthropic', 'openai', 'gemini', 'ollama', 'tunnel', 'custom'];
 const METRIC_LABELS = {
   agents: 'Agents',
   cron_jobs: 'Cron jobs',
@@ -26,6 +26,8 @@ export default function Settings() {
   const [baseUrl, setBaseUrl] = useState('');
   const [defaultModel, setDefaultModel] = useState('');
   const [ollamaModels, setOllamaModels] = useState([]);
+  const [availableTunnels, setAvailableTunnels] = useState([]);
+  const [selectedTunnelId, setSelectedTunnelId] = useState('');
   const [statuses, setStatuses] = useState({});
   const [profileName, setProfileName] = useState(user?.name || user?.email || '');
   const [showPassword, setShowPassword] = useState(false);
@@ -39,10 +41,6 @@ export default function Settings() {
   const [mfaLoading, setMfaLoading] = useState(false);
   const [mfaMessage, setMfaMessage] = useState('');
   const [showDisableMfa, setShowDisableMfa] = useState(false);
-  const [tunnelTargetUrl, setTunnelTargetUrl] = useState('http://127.0.0.1:11434');
-  const [tunnel, setTunnel] = useState(null);
-  const [tunnelStatus, setTunnelStatus] = useState(null);
-  const [tunnelLoading, setTunnelLoading] = useState(false);
 
   useEffect(() => {
     loadSettings();
@@ -50,18 +48,16 @@ export default function Settings() {
 
   const loadSettings = async () => {
     try {
-      const [keysRes, usageRes, mfaRes] = await Promise.all([
+      const [keysRes, usageRes, mfaRes, tunnelsRes] = await Promise.all([
         api.get('/api-keys'),
         api.get('/billing/usage').catch(() => ({ data: placeholderUsage(plan) })),
         api.get('/auth/mfa/status').catch(() => ({ data: { enabled: false, pending: false } })),
+        api.get('/v1/tunnels').catch(() => ({ data: { tunnels: [] } })),
       ]);
       setKeys(keysRes.data);
-      const ollamaKey = keysRes.data.find(key => key.provider === 'ollama');
-      if (ollamaKey?.base_url && !ollamaKey.base_url.includes('.tunnel.geteudora.com')) {
-        setTunnelTargetUrl(ollamaKey.base_url);
-      }
       setUsage(usageRes.data);
       setMfaStatus(mfaRes.data);
+      setAvailableTunnels(tunnelsRes.data.tunnels || []);
     } catch {
       setKeys([]);
       setBillingError('Unable to load settings');
@@ -69,7 +65,7 @@ export default function Settings() {
   };
 
   const needsBaseUrl = provider === 'ollama' || provider === 'custom';
-  const optionalKey = needsBaseUrl;
+  const optionalKey = needsBaseUrl || provider === 'tunnel';
 
   const showStatus = (id, status) => {
     setStatuses(prev => ({ ...prev, [id]: status }));
@@ -108,6 +104,7 @@ export default function Settings() {
       provider,
       label,
       ...(needsBaseUrl ? { base_url: baseUrl } : {}),
+      ...(provider === 'tunnel' ? { tunnel_id: selectedTunnelId } : {}),
       ...((!optionalKey || apiKey.trim()) ? { key: apiKey } : {}),
       default_model: defaultModel.trim() || null,
     };
@@ -140,6 +137,7 @@ export default function Settings() {
     setBaseUrl('');
     setDefaultModel('');
     setOllamaModels([]);
+    setSelectedTunnelId('');
   };
 
   const saveProfile = async () => {
@@ -217,77 +215,6 @@ export default function Settings() {
     }
   };
 
-  const generateTunnel = async () => {
-    setTunnelLoading(true);
-    setTunnelStatus(null);
-    try {
-      const res = await api.post('/tunnel/token', { targetUrl: tunnelTargetUrl });
-      setTunnel(res.data);
-      setTunnelStatus({ type: 'success', text: 'TUNNEL CONFIG GENERATED' });
-    } catch (err) {
-      setTunnelStatus({
-        type: 'error',
-        text: err.response?.data?.error || 'TUNNEL GENERATION FAILED',
-      });
-    } finally {
-      setTunnelLoading(false);
-    }
-  };
-
-  const testTunnel = async () => {
-    if (!tunnel?.tunnelUrl) return;
-    setTunnelLoading(true);
-    setTunnelStatus({ type: 'loading', text: 'TESTING TUNNEL...' });
-    try {
-      const res = await api.post('/tunnel/test', { tunnelUrl: tunnel.tunnelUrl });
-      if (!res.data.success) throw new Error(res.data.error || `HTTP ${res.data.status || 'error'}`);
-      setTunnelStatus({
-        type: 'success',
-        text: `TUNNEL ONLINE — ${res.data.latencyMs}MS — ${(res.data.models || []).length} MODELS`,
-      });
-    } catch (err) {
-      setTunnelStatus({
-        type: 'error',
-        text: err.response?.data?.error || err.message || 'TUNNEL TEST FAILED',
-      });
-    } finally {
-      setTunnelLoading(false);
-    }
-  };
-
-  const saveTunnelAsOllamaUrl = async () => {
-    if (!tunnel?.tunnelUrl) return;
-    setTunnelLoading(true);
-    setTunnelStatus(null);
-    try {
-      const ollamaKey = keys.find(key => key.provider === 'ollama');
-      let saved;
-      if (ollamaKey) {
-        const res = await api.patch(`/api-keys/${ollamaKey.id}`, {
-          base_url: tunnel.tunnelUrl,
-        });
-        saved = { ...ollamaKey, base_url: res.data.base_url };
-        setKeys(current => current.map(key => key.id === ollamaKey.id ? saved : key));
-      } else {
-        const res = await api.post('/api-keys', {
-          provider: 'ollama',
-          label: 'Ollama Cloud Tunnel',
-          base_url: tunnel.tunnelUrl,
-        });
-        saved = res.data;
-        setKeys(current => [saved, ...current]);
-      }
-      setTunnelStatus({ type: 'success', text: 'OLLAMA CONNECTION UPDATED' });
-    } catch (err) {
-      setTunnelStatus({
-        type: 'error',
-        text: err.response?.data?.error || 'FAILED TO SAVE OLLAMA URL',
-      });
-    } finally {
-      setTunnelLoading(false);
-    }
-  };
-
   const activePlan = usage?.plan || plan;
   const showUpgradeButton = activePlan === 'trial' && !isSelfHosted;
   const showManageButton = ['starter', 'professional', 'enterprise'].includes(activePlan) && !isSelfHosted;
@@ -324,6 +251,7 @@ export default function Settings() {
                   {(key.provider === 'ollama' || key.provider === 'custom') && !key.has_key && <span className="font-mono text-[9px] text-text-muted uppercase">(No auth)</span>}
                 </div>
                 {key.base_url && <p className="font-mono text-[10px] text-text-muted truncate mt-1">{key.base_url}</p>}
+                {key.tunnel_id && <p className="font-mono text-[9px] text-text-muted truncate mt-1">TUNNEL: {key.tunnel_id}</p>}
                 {key.default_model && <p className="font-mono text-[9px] text-primary/70 uppercase tracking-widest mt-1">MODEL: {key.default_model}</p>}
                 {statuses[key.id] && (
                   <p className={`font-mono text-[10px] uppercase tracking-widest mt-2 ${statuses[key.id].type === 'success' ? 'text-primary' : statuses[key.id].type === 'error' ? 'text-danger' : 'text-warning'}`}>
@@ -343,9 +271,9 @@ export default function Settings() {
 
         {showAdd && (
           <div className="mt-8 border border-[#262626] bg-[#050505] p-6 space-y-6 fade-in">
-            <div className="grid grid-cols-5 gap-4">
+            <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-4">
               {PROVIDERS.map(item => (
-                <button key={item} onClick={() => { setProvider(item); setBaseUrl(item === 'ollama' ? 'http://localhost:11434' : ''); setDefaultModel(''); setOllamaModels([]); }} className={`border flex flex-col items-center justify-center p-6 gap-3 transition-colors ${provider === item ? 'border-primary bg-primary/10 text-primary' : 'border-[#262626] bg-[#0a0a0a] text-text-muted hover:border-text-muted'}`}>
+                <button key={item} onClick={() => { setProvider(item); setBaseUrl(item === 'ollama' ? 'http://localhost:11434' : ''); setDefaultModel(''); setOllamaModels([]); setSelectedTunnelId(''); }} className={`border flex flex-col items-center justify-center p-4 gap-3 transition-colors ${provider === item ? 'border-primary bg-primary/10 text-primary' : 'border-[#262626] bg-[#0a0a0a] text-text-muted hover:border-text-muted'}`}>
                   <span className="material-symbols-outlined text-[24px]">vpn_key</span>
                   <span className="font-mono text-[10px] uppercase font-bold tracking-widest">{item}</span>
                 </button>
@@ -353,6 +281,31 @@ export default function Settings() {
             </div>
             <FormField label="Label" value={label} onChange={setLabel} />
             {needsBaseUrl && <FormField label="Base URL" value={baseUrl} onChange={setBaseUrl} placeholder={provider === 'ollama' ? 'http://localhost:11434' : 'https://model-gateway.example.com'} />}
+            {provider === 'tunnel' && (
+              <div className="space-y-2">
+                <label className="font-mono text-[10px] text-primary uppercase tracking-[0.15em] block">Tunnel</label>
+                <select
+                  value={selectedTunnelId}
+                  onChange={(event) => setSelectedTunnelId(event.target.value)}
+                  className="w-full bg-[#050505] border border-[#262626] text-white px-4 py-3 font-mono text-[13px] focus:border-primary"
+                >
+                  <option value="">SELECT A TUNNEL</option>
+                  {availableTunnels.map(item => (
+                    <option key={item.id} value={item.id}>
+                      {item.name} — {item.status}
+                    </option>
+                  ))}
+                </select>
+                {availableTunnels.length === 0 && (
+                  <button
+                    onClick={() => navigate('/tunnels')}
+                    className="font-mono text-[9px] text-primary uppercase tracking-widest cursor-pointer"
+                  >
+                    Create a tunnel first
+                  </button>
+                )}
+              </div>
+            )}
             <ModelField
               provider={provider}
               value={defaultModel}
@@ -361,7 +314,9 @@ export default function Settings() {
               label="DEFAULT_MODEL"
               helper="Used by all agents on this connection unless overridden per-agent"
             />
-            <FormField label={optionalKey ? 'API Key (optional)' : 'API Key'} value={apiKey} onChange={setApiKey} type="password" placeholder="sk-..." />
+            {provider !== 'tunnel' && (
+              <FormField label={optionalKey ? 'API Key (optional)' : 'API Key'} value={apiKey} onChange={setApiKey} type="password" placeholder="sk-..." />
+            )}
             {statuses.new && (
               <p className={`font-mono text-[10px] uppercase tracking-widest ${statuses.new.type === 'success' ? 'text-primary' : 'text-danger'}`}>{statuses.new.type === 'success' ? '✅ ' : '❌ '}{statuses.new.text}</p>
             )}
@@ -379,7 +334,8 @@ export default function Settings() {
 
       {isSelfHosted && (
         <section className="border border-[#262626] bg-[#0a0a0a] p-6 lg:p-8">
-          <div className="flex items-start gap-3 mb-6">
+          <div className="flex items-start justify-between gap-6">
+            <div className="flex items-start gap-3">
             <span className="material-symbols-outlined text-primary text-[20px]">cable</span>
             <div>
               <h2 className="font-mono text-[14px] text-white uppercase font-bold tracking-widest">Use With Cloud Eudora</h2>
@@ -387,79 +343,13 @@ export default function Settings() {
                 Expose this Ollama instance through an authenticated FRP tunnel.
               </p>
             </div>
-          </div>
-
-          <div className="space-y-5 border border-[#262626] bg-[#050505] p-5">
-            <FormField
-              label="Local Ollama URL"
-              value={tunnelTargetUrl}
-              onChange={setTunnelTargetUrl}
-              placeholder="http://127.0.0.1:11434"
-            />
-
+            </div>
             <button
-              onClick={generateTunnel}
-              disabled={tunnelLoading || !tunnelTargetUrl}
-              className="border border-primary/40 text-primary hover:bg-primary/10 px-5 py-2.5 font-mono text-[10px] uppercase tracking-widest cursor-pointer disabled:opacity-50 transition-colors"
+              onClick={() => navigate('/tunnels')}
+              className="border border-primary/40 text-primary hover:bg-primary/10 px-5 py-2.5 font-mono text-[10px] uppercase tracking-widest cursor-pointer transition-colors whitespace-nowrap"
             >
-              {tunnelLoading && !tunnel ? 'Generating...' : 'Generate Tunnel Token'}
+              Manage Tunnels
             </button>
-
-            {tunnel && (
-              <div className="space-y-4 border-t border-[#1a1a1a] pt-5">
-                <div className="space-y-1">
-                  <p className="font-mono text-[9px] text-text-muted uppercase tracking-widest">Tunnel URL</p>
-                  <code className="block border border-[#262626] bg-[#0a0a0a] p-3 font-mono text-[11px] text-primary break-all">
-                    {tunnel.tunnelUrl}
-                  </code>
-                </div>
-                <div className="space-y-1">
-                  <div className="flex items-center justify-between">
-                    <p className="font-mono text-[9px] text-text-muted uppercase tracking-widest">frpc.toml</p>
-                    <button
-                      onClick={() => navigator.clipboard.writeText(tunnel.instructions.config)}
-                      className="font-mono text-[9px] text-text-muted hover:text-primary uppercase tracking-widest cursor-pointer transition-colors"
-                    >
-                      Copy Config
-                    </button>
-                  </div>
-                  <pre className="border border-[#262626] bg-[#0a0a0a] p-4 font-mono text-[10px] text-text-muted whitespace-pre-wrap break-all overflow-x-auto">
-                    {tunnel.instructions.config}
-                  </pre>
-                  <p className="font-mono text-[9px] text-text-muted">
-                    Download FRP, save this configuration, then run <code className="text-primary">{tunnel.instructions.command}</code>.
-                  </p>
-                </div>
-                <div className="flex flex-col sm:flex-row gap-3">
-                  <button
-                    onClick={testTunnel}
-                    disabled={tunnelLoading}
-                    className="border border-[#262626] text-text-muted hover:border-primary hover:text-primary px-5 py-2.5 font-mono text-[10px] uppercase tracking-widest cursor-pointer disabled:opacity-50 transition-colors"
-                  >
-                    Test Tunnel
-                  </button>
-                  <button
-                    onClick={saveTunnelAsOllamaUrl}
-                    disabled={tunnelLoading}
-                    className="bg-primary text-[#050505] px-5 py-2.5 font-mono text-[10px] font-bold uppercase tracking-widest cursor-pointer disabled:opacity-50 hover:bg-primary/90 transition-colors"
-                  >
-                    Save As Ollama URL
-                  </button>
-                </div>
-              </div>
-            )}
-
-            {tunnelStatus && (
-              <p className={`font-mono text-[10px] uppercase tracking-widest ${
-                tunnelStatus.type === 'success'
-                  ? 'text-primary'
-                  : tunnelStatus.type === 'error'
-                    ? 'text-danger'
-                    : 'text-warning'
-              }`}>
-                {tunnelStatus.text}
-              </p>
-            )}
           </div>
         </section>
       )}
@@ -678,6 +568,7 @@ function ModelField({ provider, value, onChange, options = [], label, helper }) 
     anthropic: 'claude-sonnet-4-20250514',
     gemini: 'gemini-2.0-flash',
     custom: 'deployment-name',
+    tunnel: 'qwen2.5:14b',
     azure: 'deployment-name',
   };
   return (

@@ -54,7 +54,10 @@ export default function Sidebar() {
       header: 'ACCOUNT',
       items: [
         ...(plan === 'professional' || plan === 'enterprise' || isSelfHosted
-          ? [{ id: 'team', icon: 'group', label: 'TEAM', path: '/team' }]
+          ? [
+              { id: 'team', icon: 'group', label: 'TEAM', path: '/team' },
+              { id: 'tunnels', icon: 'cable', label: 'TUNNELS', path: '/tunnels' },
+            ]
           : []),
         { id: 'settings', icon: 'settings', label: 'SETTINGS', path: '/settings' },
       ],

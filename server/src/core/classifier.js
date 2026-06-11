@@ -3,6 +3,7 @@ import { adaptDatabase } from '../db/index.js'
 import { decrypt } from '../utils/encryption.js'
 import { INTENT_TYPES } from '../../../shared/constants/intentTypes.js'
 import { refreshOAuthToken } from '../utils/oauthRefresh.js'
+import { tunnelBaseUrl } from '../services/tunnelService.js'
 
 export class InvalidApiKeyError extends Error {
   constructor(msg = 'Invalid API key') {
@@ -111,8 +112,11 @@ export async function classify(userMessage, apiKeyId, tenantId) {
       const data = await res.json()
       responseText = data.candidates[0].content.parts[0].text
 
-    } else if (provider === 'ollama') {
-      const res = await fetch(`${activeRow.base_url}/api/chat`, {
+    } else if (provider === 'ollama' || provider === 'tunnel') {
+      const baseUrl = provider === 'tunnel'
+        ? tunnelBaseUrl(activeRow.tunnel_id)
+        : activeRow.base_url
+      const res = await fetch(`${baseUrl}/api/chat`, {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
         body: JSON.stringify({

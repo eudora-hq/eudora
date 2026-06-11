@@ -10,6 +10,7 @@ import { record } from '../audit/traceRecorder.js'
 import { getHumanRoot } from '../utils/ownershipChain.js'
 import { nanoid } from 'nanoid'
 import { resolveModel } from '../utils/resolveModel.js'
+import { tunnelBaseUrl } from '../services/tunnelService.js'
 
 export interface ProxyRequest {
   tenant_id: string
@@ -249,7 +250,9 @@ export default async function proxyRoutes(fastify: any): Promise<void> {
     const decryptedKey = getApiCredential(apiKey)
     const resolvedModel = proxyModel(agent, apiKey, request.body?.model)
     const body = resolvedModel ? { ...request.body, model: resolvedModel } : request.body
-    const targetUrl = agent.endpoint_url
+    const targetUrl = apiKey.provider === 'tunnel'
+      ? endpoint(tunnelBaseUrl(apiKey.tunnel_id), '/v1/chat/completions')
+      : agent.endpoint_url
       ? endpoint(agent.endpoint_url, '/v1/chat/completions')
       : 'https://api.openai.com/v1/chat/completions'
 

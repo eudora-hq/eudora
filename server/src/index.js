@@ -33,11 +33,12 @@ import integrationsRoutes from './routes/integrations.js'
 import analyticsRoutes from './routes/analytics.js'
 import ingestRoutes from './routes/ingest.js'
 import approvalsRoutes from './routes/approvals.js'
+import tunnelsRoutes from './routes/tunnels.js'
 import { loadAllJobs } from './scheduler/cronRunner.js'
 import { startApprovalMonitor } from './services/approvalGates.js'
+import { startTunnelMonitor } from './services/tunnelService.js'
 
 const PORT = process.env.PORT || 3001
-const tunnelTokens = new Map()
 
 async function start() {
   const fastify = Fastify({ logger: true })
@@ -73,6 +74,8 @@ async function start() {
   await loadAllJobs()
   console.log('[startup] Cron scheduler loaded')
   startApprovalMonitor(db, fastify.log)
+  const stopTunnelMonitor = startTunnelMonitor(db, fastify.log)
+  fastify.addHook('onClose', async () => stopTunnelMonitor())
   fastify.decorate('db', db)
 
   // Public routes: no token required
@@ -99,6 +102,10 @@ async function start() {
     if (PUBLIC_ROUTES.has(key)) return
     if (process.env.ENABLE_ADMIN === 'true' && path.startsWith('/admin/')) return
     if (path === '/v1/ingest') return
+    if (
+      request.method === 'POST' &&
+      /^\/v1\/tunnels\/[^/]+\/heartbeat$/.test(path)
+    ) return
     if (request.method === 'GET' && path.startsWith('/auth/invite/')) return
     if (path.startsWith('/proxy/')) return
 
@@ -137,6 +144,7 @@ async function start() {
   fastify.register(analyticsRoutes, { prefix: '/analytics' })
   fastify.register(ingestRoutes, { prefix: '/v1' })
   fastify.register(approvalsRoutes, { prefix: '/v1/approvals' })
+  fastify.register(tunnelsRoutes, { prefix: '/v1/tunnels' })
   if (process.env.ENABLE_ADMIN === 'true') {
     const { default: adminRoutes } = await import('./routes/admin.js')
     await fastify.register(adminRoutes, { prefix: '/admin' })
@@ -146,56 +154,6 @@ async function start() {
   }
 
   fastify.get('/health', async () => ({ status: 'ok', ts: Date.now() }))
-  fastify.post('/tunnel/token', async (request, reply) => {
-    const { targetUrl = 'http://127.0.0.1:11434' } = request.body || {}
-
-    let target
-    try {
-      target = new URL(targetUrl)
-    } catch {
-      return reply.code(400).send({ error: 'invalid_target_url' })
-    }
-    if (!['http:', 'https:'].includes(target.protocol)) {
-      return reply.code(400).send({ error: 'invalid_target_url' })
-    }
-
-    const crypto = await import('crypto')
-    const tunnelToken = crypto.default.randomBytes(24).toString('hex')
-    const tenantPrefix = String(request.tenantId)
-      .toLowerCase()
-      .replace(/[^a-z0-9-]/g, '')
-      .substring(0, 8) || 'eudora'
-    const subdomain = `${tenantPrefix}-ollama`
-    const tunnelUrl = `https://${subdomain}.tunnel.geteudora.com`
-    const localPort = target.port || (target.protocol === 'https:' ? '443' : '80')
-
-    tunnelTokens.set(request.tenantId, {
-      token: tunnelToken,
-      targetUrl: target.toString().replace(/\/+$/, ''),
-      subdomain,
-      createdAt: Date.now(),
-    })
-
-    return reply.send({
-      tunnelToken,
-      subdomain,
-      tunnelUrl,
-      instructions: {
-        download: 'https://github.com/fatedier/frp/releases',
-        config: `[common]
-server_addr = tunnel.geteudora.com
-server_port = 7000
-token = ${tunnelToken}
-
-[ollama]
-type = http
-local_ip = ${target.hostname}
-local_port = ${localPort}
-custom_domains = ${subdomain}.tunnel.geteudora.com`,
-        command: './frpc -c frpc.toml',
-      },
-    })
-  })
   fastify.post('/tunnel/test', async (request, reply) => {
     const { tunnelUrl } = request.body || {}
 
