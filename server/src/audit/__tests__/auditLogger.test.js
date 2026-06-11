@@ -4,7 +4,7 @@ import { readFileSync } from 'fs'
 import { resolve, dirname } from 'path'
 import { fileURLToPath } from 'url'
 import { nanoid } from 'nanoid'
-import { log, AUDIT_ACTIONS } from '../auditLogger.js'
+import { log, AUDIT_ACTIONS } from '../auditLogger.ts'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
 const migrationSql = readFileSync(

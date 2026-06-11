@@ -1,7 +1,7 @@
 import { adaptDatabase } from '../db/index.js'
 import { nanoid } from 'nanoid'
 import { isUnderAgentLimit } from '../billing/canAccess.js'
-import { log } from '../audit/auditLogger.js'
+import { log } from '../audit/auditLogger.ts'
 import { encrypt } from '../utils/encryption.js'
 import { validateOwnership } from '../utils/ownershipChain.js'
 

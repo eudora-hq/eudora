@@ -4,6 +4,10 @@ import { adaptDatabase } from '../db/index.js'
 const MAX_CHAIN_DEPTH = 10
 
 /**
+ * @typedef {{ valid: true, chain: string[] } | { valid: false, error: string, code: string }} OwnershipResult
+ */
+
+/**
  * Validates an ownership assignment and returns the resolved chain.
  *
  * @param {object} db - SQLite DB instance
@@ -11,7 +15,7 @@ const MAX_CHAIN_DEPTH = 10
  * @param {string} ownerType - 'human' | 'agent'
  * @param {string} tenantId - the tenant making this request
  * @param {string|null} selfId - the agent being created/updated (null for new agents)
- * @returns {{ valid: true, chain: string[] } | { valid: false, error: string, code: string }}
+ * @returns {OwnershipResult | Promise<OwnershipResult>}
  */
 export function validateOwnership(db, ownerId, ownerType, tenantId, selfId = null) {
   db = adaptDatabase(db)
@@ -21,6 +25,7 @@ export function validateOwnership(db, ownerId, ownerType, tenantId, selfId = nul
   return validateOwnershipAsync(db, ownerId, ownerType, tenantId, selfId)
 }
 
+/** @returns {OwnershipResult} */
 function validateOwnershipSync(db, ownerId, ownerType, tenantId, selfId) {
   try {
     if (ownerType === 'human') {
@@ -104,6 +109,7 @@ function validateOwnershipSync(db, ownerId, ownerType, tenantId, selfId) {
   }
 }
 
+/** @returns {Promise<OwnershipResult>} */
 async function validateOwnershipAsync(db, ownerId, ownerType, tenantId, selfId) {
   try {
     if (ownerType === 'human') {
@@ -209,7 +215,7 @@ async function validateOwnershipAsync(db, ownerId, ownerType, tenantId, selfId) 
  * @param {object} db
  * @param {string} agentId
  * @param {string} tenantId
- * @returns {string|null}
+ * @returns {string|null|Promise<string|null>}
  */
 export function getHumanRoot(db, agentId, tenantId) {
   db = adaptDatabase(db)

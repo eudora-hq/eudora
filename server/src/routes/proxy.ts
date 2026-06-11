@@ -5,19 +5,44 @@ import { sanitise } from '../security/sanitiser.js'
 import { guard } from '../security/guardLayer.js'
 import { score } from '../security/riskScorer.js'
 import { enforceScope } from '../security/scopeEnforcer.js'
-import { log } from '../audit/auditLogger.js'
+import { log } from '../audit/auditLogger.ts'
 import { record } from '../audit/traceRecorder.js'
 import { getHumanRoot } from '../utils/ownershipChain.js'
 import { nanoid } from 'nanoid'
 import { resolveModel } from '../utils/resolveModel.js'
 
-function extractOpenAIMessage(body) {
+export interface ProxyRequest {
+  tenant_id: string
+  agent_id: string
+  session_id: string
+  messages: Array<{ role: string; content: string }>
+  model?: string
+}
+
+export interface ProxyResult {
+  blocked: boolean
+  block_reason?: string
+  content?: string
+  risk_score: number
+  request_id: string
+}
+
+interface ProxyMessageBody {
+  messages?: Array<{
+    role?: string
+    content?: string | Array<{ type?: string; text?: string }>
+  }>
+  model?: string
+  [key: string]: unknown
+}
+
+function extractOpenAIMessage(body: ProxyMessageBody) {
   const messages = body.messages || []
   const last = messages[messages.length - 1]
   return last?.content || ''
 }
 
-function extractAnthropicMessage(body) {
+function extractAnthropicMessage(body: ProxyMessageBody): string {
   const messages = body.messages || []
   const last = messages[messages.length - 1]
   if (typeof last?.content === 'string') return last.content
@@ -27,16 +52,16 @@ function extractAnthropicMessage(body) {
   return ''
 }
 
-function extractOpenAIResponseText(data) {
+function extractOpenAIResponseText(data: any): string {
   return data?.choices?.[0]?.message?.content || ''
 }
 
-function extractAnthropicResponseText(data) {
+function extractAnthropicResponseText(data: any): string {
   const first = data?.content?.[0]
   return typeof first?.text === 'string' ? first.text : ''
 }
 
-function buildRefusal(providerName) {
+function buildRefusal(providerName: string): Record<string, unknown> {
   if (providerName === 'anthropic') {
     return {
       id: `msg_eudora_${nanoid(8)}`,
@@ -61,15 +86,15 @@ function buildRefusal(providerName) {
   }
 }
 
-function getApiCredential(apiKey) {
+function getApiCredential(apiKey: any): string | null {
   if (!apiKey?.key_encrypted) return null
   return decrypt(apiKey.key_encrypted, apiKey.key_iv)
 }
 
-export default async function proxyRoutes(fastify) {
+export default async function proxyRoutes(fastify: any): Promise<void> {
   const db = adaptDatabase(fastify.db ?? getDb())
 
-  async function authenticateProxy(request, reply) {
+  async function authenticateProxy(request: any, reply: any): Promise<unknown> {
     const auth = request.headers.authorization
     if (!auth || !auth.startsWith('Bearer eudora-proxy-')) {
       return reply.code(401).send({
@@ -99,7 +124,7 @@ export default async function proxyRoutes(fastify) {
     request.tenantId = agent.tenant_id
   }
 
-  function runCompliancePipeline(agent, userMessage, providerName) {
+  function runCompliancePipeline(agent: any, userMessage: any, providerName: string) {
     const startedAt = Date.now()
     const sanitiserResult = sanitise(userMessage)
     const guardResult = guard(sanitiserResult, agent.purpose)
@@ -117,13 +142,13 @@ export default async function proxyRoutes(fastify) {
   }
 
   async function auditProxy(
-    agent,
-    pipeline,
-    blocked,
+    agent: any,
+    pipeline: any,
+    blocked: boolean,
     responseText = '',
-    scopeResult = null,
-    resolvedModel = null
-  ) {
+    scopeResult: any = null,
+    resolvedModel: string | null = null
+  ): Promise<void> {
     const ownerChain = JSON.parse(agent.owner_chain || '[]')
     const humanRoot = agent.owner_type === 'human'
       ? agent.owner_id
@@ -168,7 +193,7 @@ export default async function proxyRoutes(fastify) {
     }, db)
   }
 
-  async function getAgentApiKey(agent, reply) {
+  async function getAgentApiKey(agent: any, reply: any): Promise<any | null> {
     const apiKey = await db.get(
       'SELECT * FROM api_keys WHERE id = ? AND tenant_id = ?'
     , [agent.api_key_id, agent.tenant_id])
@@ -191,17 +216,21 @@ export default async function proxyRoutes(fastify) {
     return apiKey
   }
 
-  function proxyModel(agent, apiKey, requestModel = null) {
+  function proxyModel(
+    agent: any,
+    apiKey: any,
+    requestModel: string | null = null
+  ): string | null {
     return resolveModel(agent, apiKey) || requestModel || null
   }
 
-  function endpoint(base, path) {
+  function endpoint(base: string, path: string): string {
     return `${String(base).replace(/\/+$/, '')}${path}`
   }
 
   fastify.post('/openai/v1/chat/completions', {
     preHandler: authenticateProxy,
-  }, async (request, reply) => {
+  }, async (request: any, reply: any) => {
     const agent = request.proxyAgent
     const pipeline = runCompliancePipeline(agent, extractOpenAIMessage(request.body), 'openai')
     const configuredConnection = agent.api_key_id
@@ -241,7 +270,7 @@ export default async function proxyRoutes(fastify) {
 
   fastify.post('/anthropic/v1/messages', {
     preHandler: authenticateProxy,
-  }, async (request, reply) => {
+  }, async (request: any, reply: any) => {
     const agent = request.proxyAgent
     const pipeline = runCompliancePipeline(agent, extractAnthropicMessage(request.body), 'anthropic')
     const configuredConnection = agent.api_key_id
@@ -282,7 +311,7 @@ export default async function proxyRoutes(fastify) {
 
   fastify.post('/azure/:resource/openai/deployments/:model/chat/completions', {
     preHandler: authenticateProxy,
-  }, async (request, reply) => {
+  }, async (request: any, reply: any) => {
     const agent = request.proxyAgent
     const { resource, model } = request.params
     const apiVersion = request.query['api-version'] || '2024-02-01'
@@ -310,7 +339,7 @@ export default async function proxyRoutes(fastify) {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
-        'api-key': decryptedKey,
+        'api-key': decryptedKey as string,
       },
       body: JSON.stringify(request.body),
     })
@@ -323,7 +352,7 @@ export default async function proxyRoutes(fastify) {
 
   fastify.post('/custom/:agentId/v1/chat/completions', {
     preHandler: authenticateProxy,
-  }, async (request, reply) => {
+  }, async (request: any, reply: any) => {
     const agent = request.proxyAgent
     const pipeline = runCompliancePipeline(agent, extractOpenAIMessage(request.body), 'custom')
     const configuredConnection = agent.api_key_id
@@ -341,7 +370,7 @@ export default async function proxyRoutes(fastify) {
     if (!apiKey) return
     const decryptedKey = getApiCredential(apiKey)
     const resolvedModel = proxyModel(agent, apiKey, request.body?.model)
-    const headers = { 'Content-Type': 'application/json' }
+    const headers: Record<string, string> = { 'Content-Type': 'application/json' }
     if (decryptedKey) headers.Authorization = `Bearer ${decryptedKey}`
 
     const response = await fetch(endpoint(agent.endpoint_url || apiKey.base_url, '/v1/chat/completions'), {

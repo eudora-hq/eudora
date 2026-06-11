@@ -2,7 +2,7 @@ import { nanoid } from 'nanoid'
 import { sanitise } from '../security/sanitiser.js'
 import { createNotification } from '../utils/notify.js'
 import { sendApprovalRequiredEmail } from '../utils/email.js'
-import { log } from '../audit/auditLogger.js'
+import { log } from '../audit/auditLogger.ts'
 import { adaptDatabase } from '../db/index.js'
 
 const APP_URL = process.env.CLIENT_URL || 'http://localhost:5173'

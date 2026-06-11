@@ -5,7 +5,7 @@ import { dirname, resolve } from 'path'
 import { fileURLToPath } from 'url'
 import { nanoid } from 'nanoid'
 import { normalizePlan } from '../billing/canAccess.js'
-import { generateComplianceReport } from '../reports/complianceReport.js'
+import { generateComplianceReport } from '../reports/complianceReport.ts'
 import {
   TSA_URL,
   extractTimestampedContent,

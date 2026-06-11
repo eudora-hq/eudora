@@ -4,7 +4,7 @@ import { nanoid } from 'nanoid'
 import { createPostgresAdapter } from '../db/postgres.js'
 import { runMigrations } from '../db/migrations.js'
 import { rewritePlaceholders } from '../db/queryRewriter.js'
-import { generateComplianceReport } from '../reports/complianceReport.js'
+import { generateComplianceReport } from '../reports/complianceReport.ts'
 
 const connectionString = process.env.TEST_DATABASE_URL
 const describePostgres = connectionString ? describe : describe.skip

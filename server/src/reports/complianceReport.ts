@@ -10,6 +10,31 @@ import {
 import { getArticle50Template } from '../services/article50Templates.js'
 import { adaptDatabase } from '../db/index.js'
 
+export type ReportMode = 'flagged' | 'full' | 'summary' | 'article50'
+export type SectorTemplate = 'general' | 'healthcare' | 'financial' | 'hr_legal'
+
+export interface ReportOptions {
+  tenantId: string
+  dateFrom: number
+  dateTo: number
+  reportId: string
+  generatedAt: number
+  agentId?: string | null
+  traceMode?: Exclude<ReportMode, 'article50'>
+  reportMode?: ReportMode
+  sectorTemplate?: SectorTemplate
+}
+
+export interface ComplianceReportResult {
+  reportHash: string
+  pdfBuffer: Buffer
+  data: Record<string, any>
+  timestampToken: string | null
+  timestampStatus: 'ok' | 'unavailable'
+  timestampTime: string | null
+  tsaUrl: string
+}
+
 const SECURITY_ACTIONS = new Set([
   'guard_block',
   'scope_violation',
@@ -122,7 +147,7 @@ async function gatherTraceData(db, tenantId, dateFrom, dateTo, agentId, traceMod
       : 0
     const flaggedRuns = allTraces.filter(isFlaggedTrace).length
 
-    let traces = []
+    let traces: any[] = []
     let truncated = false
     if (traceMode === 'full') {
       traces = allTraces.slice(0, 100)
@@ -171,7 +196,7 @@ async function gatherTraceData(db, tenantId, dateFrom, dateTo, agentId, traceMod
   return results.filter((agent) => agent.totalRuns > 0)
 }
 
-async function collectReportData(db, {
+async function collectReportData(db: any, {
   tenantId,
   dateFrom,
   dateTo,
@@ -191,8 +216,8 @@ async function collectReportData(db, {
   const users = await db.all(
     'SELECT id, email, role FROM users WHERE tenant_id = ?'
   , [tenantId])
-  const usersById = new Map(users.map((user) => [user.id, user]))
-  const agentsById = new Map(agents.map((agent) => [agent.id, agent]))
+  const usersById = new Map<any, any>(users.map((user: any) => [user.id, user]))
+  const agentsById = new Map<any, any>(agents.map((agent: any) => [agent.id, agent]))
 
   const rawEventRows = await db.all(
     'SELECT * FROM audit_log WHERE tenant_id = ? AND ts BETWEEN ? AND ? ORDER BY ts ASC'
@@ -272,7 +297,13 @@ async function collectReportData(db, {
 
   let verifiedCount = 0
   const ownership = await Promise.all(agents.map(async (agent) => {
-    const validation = await validateOwnership(db, agent.owner_id, agent.owner_type, tenantId, agent.id)
+    const validation: any = await validateOwnership(
+      db,
+      agent.owner_id,
+      agent.owner_type,
+      tenantId,
+      agent.id
+    )
     const chain = validation.chain || []
     let ownerDisplay = ''
     let chainDisplay = ''
@@ -383,7 +414,7 @@ function sectionTitle(doc, text) {
   doc.moveDown(0.8)
 }
 
-function tableRow(doc, values, widths, options = {}) {
+function tableRow(doc: any, values: any[], widths: number[], options: any = {}) {
   const startY = doc.y
   const font = options.header ? 'Helvetica-Bold' : 'Helvetica'
   const size = options.header ? 8 : 7
@@ -428,7 +459,7 @@ function ensureSpace(doc, minimumY = 700) {
   if (doc.y > minimumY) doc.addPage()
 }
 
-function renderTimestampSection(doc, timestamp = {}) {
+function renderTimestampSection(doc: any, timestamp: any = {}) {
   sectionTitle(doc, 'RFC 3161 TIMESTAMP')
   doc.font('Helvetica').fontSize(11).fillColor('#111111')
 
@@ -457,15 +488,15 @@ function renderTimestampSection(doc, timestamp = {}) {
   )
 }
 
-function renderPdf(data, reportHash) {
+function renderPdf(data: any, reportHash: string): Promise<Buffer> {
   if (data.reportMode === 'article50') {
     return renderArticle50Pdf(data, reportHash)
   }
 
-  return new Promise((resolve, reject) => {
+  return new Promise<Buffer>((resolve, reject) => {
     const doc = new PDFDocument({ margin: 40, size: 'A4' })
-    const chunks = []
-    doc.on('data', (chunk) => chunks.push(chunk))
+    const chunks: Buffer[] = []
+    doc.on('data', (chunk: Buffer) => chunks.push(chunk))
     doc.on('end', () => resolve(Buffer.concat(chunks)))
     doc.on('error', reject)
 
@@ -634,11 +665,11 @@ function renderPdf(data, reportHash) {
   })
 }
 
-function renderArticle50Pdf(data, reportHash) {
-  return new Promise((resolve, reject) => {
+function renderArticle50Pdf(data: any, reportHash: string): Promise<Buffer> {
+  return new Promise<Buffer>((resolve, reject) => {
     const doc = new PDFDocument({ margin: 40, size: 'A4' })
-    const chunks = []
-    doc.on('data', chunk => chunks.push(chunk))
+    const chunks: Buffer[] = []
+    doc.on('data', (chunk: Buffer) => chunks.push(chunk))
     doc.on('end', () => resolve(Buffer.concat(chunks)))
     doc.on('error', reject)
 
@@ -741,15 +772,21 @@ function renderArticle50Pdf(data, reportHash) {
   })
 }
 
-export async function generateComplianceReport(db, options) {
+export async function generateComplianceReport(
+  db: any,
+  options: ReportOptions
+): Promise<ComplianceReportResult> {
   db = adaptDatabase(db)
-  const data = await collectReportData(db, options)
+  const data: any = await collectReportData(db, {
+    ...options,
+    agentId: options.agentId ?? null,
+  })
   const reportHash = hashReportData(data)
   const preliminaryPdfBuffer = await renderPdf(data, reportHash)
   let pdfBuffer
-  let timestampToken = null
-  let timestampStatus = 'unavailable'
-  let timestampTime = null
+  let timestampToken: string | null = null
+  let timestampStatus: 'ok' | 'unavailable' = 'unavailable'
+  let timestampTime: string | null = null
 
   try {
     // First pass obtains the TSA-issued time needed for the visible PDF section.
@@ -776,8 +813,9 @@ export async function generateComplianceReport(db, options) {
     timestampTime = verification.timestamp
     timestampStatus = 'ok'
     pdfBuffer = embedTimestampMetadata(timestampedContent, token)
-  } catch (error) {
-    console.error('[compliance-report] RFC 3161 timestamp unavailable:', error.message)
+  } catch (error: unknown) {
+    const message = error instanceof Error ? error.message : String(error)
+    console.error('[compliance-report] RFC 3161 timestamp unavailable:', message)
     data.timestamp = {
       status: 'unavailable',
       time: null,

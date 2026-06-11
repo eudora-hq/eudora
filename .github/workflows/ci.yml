@@ -18,7 +18,7 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: '20'
+          node-version: '22'
           cache: 'npm'
           cache-dependency-path: server/package-lock.json
 
@@ -53,6 +53,10 @@ jobs:
           JWT_SECRET: test-jwt-secret-32-chars-minimum!!
           ENCRYPTION_KEY: 0000000000000000000000000000000000000000000000000000000000000000
           DB_PATH: ':memory:'
+
+      - name: Run typecheck
+        working-directory: server
+        run: npm run typecheck
 
       - name: Run lint
         working-directory: server

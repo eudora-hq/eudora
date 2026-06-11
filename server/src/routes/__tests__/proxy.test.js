@@ -10,7 +10,7 @@ process.env.ENCRYPTION_KEY = '0'.repeat(64)
 process.env.SELF_HOSTED = 'false'
 
 import { encrypt } from '../../utils/encryption.js'
-import proxyRoutes from '../proxy.js'
+import proxyRoutes from '../proxy.ts'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
 const migration001 = readFileSync(resolve(__dirname, '../../db/migrations/001_initial_schema.sql'), 'utf8')

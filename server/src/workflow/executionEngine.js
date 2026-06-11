@@ -7,7 +7,7 @@ import { compose } from '../core/promptComposer.js'
 import { relay } from '../core/modelRelay.js'
 import { enforceScope } from '../security/scopeEnforcer.js'
 import { score } from '../security/riskScorer.js'
-import { log, AUDIT_ACTIONS } from '../audit/auditLogger.js'
+import { log, AUDIT_ACTIONS } from '../audit/auditLogger.ts'
 import { createApprovalGate } from '../services/approvalGates.js'
 import { adaptDatabase } from '../db/index.js'
 

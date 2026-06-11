@@ -33,7 +33,7 @@ vi.mock('../../security/scopeEnforcer.js', () => ({
 vi.mock('../../core/contextRetriever.js', () => ({
   retrieve: vi.fn().mockResolvedValue({ files: [], tokensEstimate: 0, excluded: [] }),
 }))
-vi.mock('../../audit/auditLogger.js', () => ({
+vi.mock('../../audit/auditLogger.ts', () => ({
   log: vi.fn(),
   AUDIT_ACTIONS: { WORKFLOW_RUN: 'workflow_run', CHAT_MESSAGE: 'chat_message' },
 }))
@@ -48,7 +48,7 @@ vi.mock('../../core/modelRelay.js', () => ({
 }))
 
 import { relay } from '../../core/modelRelay.js'
-import { log } from '../../audit/auditLogger.js'
+import { log } from '../../audit/auditLogger.ts'
 import { executeWorkflow } from '../executionEngine.js'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))

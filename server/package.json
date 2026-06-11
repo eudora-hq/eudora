@@ -7,7 +7,9 @@
     "start": "node src/index.js",
     "migrate": "node src/db/migrations/runner.js",
     "test": "vitest run",
-    "lint": "eslint src --ext .js"
+    "lint": "eslint src --ext .js",
+    "typecheck": "tsc --noEmit",
+    "typecheck:watch": "tsc --noEmit --watch"
   },
   "dependencies": {
     "@fastify/cors": "^11.2.0",
@@ -34,7 +36,10 @@
     "stripe": "^22.2.0"
   },
   "devDependencies": {
+    "@types/better-sqlite3": "^7.6.13",
+    "@types/node": "^25.9.3",
     "eslint": "^8.57.0",
+    "typescript": "^6.0.3",
     "vitest": "^4.1.8"
   }
 }

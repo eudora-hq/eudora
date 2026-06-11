@@ -46,7 +46,7 @@ vi.mock('../../core/modelRelay.js', async (importOriginal) => {
   }
 })
 
-vi.mock('../../audit/auditLogger.js', () => ({
+vi.mock('../../audit/auditLogger.ts', () => ({
   log: vi.fn(),
   AUDIT_ACTIONS: {
     CHAT_MESSAGE: 'chat_message',

@@ -22,7 +22,7 @@ import cronRoutes from './routes/cron.js'
 import workflowsRoutes from './routes/workflows.js'
 import onboardingRoutes from './routes/onboarding.js'
 import accountRoutes from './routes/account.js'
-import proxyRoutes from './routes/proxy.js'
+import proxyRoutes from './routes/proxy.ts'
 import reportsRoutes, {
   registerArticle50Routes,
   registerReportVerificationRoute,

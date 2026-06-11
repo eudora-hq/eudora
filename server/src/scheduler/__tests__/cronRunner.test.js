@@ -43,7 +43,7 @@ vi.mock('../../security/sanitiser.js', () => ({ sanitise: mocks.sanitise }))
 vi.mock('../../security/guardLayer.js', () => ({ guard: mocks.guard }))
 vi.mock('../../security/scopeEnforcer.js', () => ({ enforceScope: mocks.enforceScope }))
 vi.mock('../../security/riskScorer.js', () => ({ score: mocks.score }))
-vi.mock('../../audit/auditLogger.js', () => ({
+vi.mock('../../audit/auditLogger.ts', () => ({
   AUDIT_ACTIONS: { CRON_RUN: 'cron_run' },
   log: mocks.log,
 }))

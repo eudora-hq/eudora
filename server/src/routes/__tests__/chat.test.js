@@ -63,7 +63,7 @@ vi.mock('../../security/riskScorer.js', () => ({
   score: vi.fn(() => 0),
 }))
 
-vi.mock('../../audit/auditLogger.js', () => ({
+vi.mock('../../audit/auditLogger.ts', () => ({
   log: vi.fn(),
   AUDIT_ACTIONS: {
     CHAT_MESSAGE: 'chat_message',
