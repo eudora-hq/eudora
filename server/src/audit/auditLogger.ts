@@ -1,4 +1,5 @@
 import { createHash } from 'crypto'
+import { createHmac } from 'node:crypto'
 import { nanoid } from 'nanoid'
 import getDb from '../db/client.ts'
 import { adaptDatabase } from '../db/index.ts'
@@ -26,27 +27,68 @@ export function log(entry: any, db?: any) {
   setImmediate(async () => {
     try {
       const _db = adaptDatabase(db ?? getDb())
-      const hasResolvedModel = (await _db.columns('audit_log'))
+      const auditColumns = await _db.columns('audit_log')
+      const hasResolvedModel = auditColumns
         .some(column => column.name === 'resolved_model')
+      const hasHmacColumn = auditColumns
+        .some(column => column.name === 'row_hmac')
+      const id = nanoid()
+      const tenant_id = entry.tenantId
+      const user_id = entry.userId
+      const action = entry.action
+      const context_hash = sha256(entry.context)
+      const prompt_hash = sha256(entry.prompt)
+      const response_hash = sha256(entry.response)
+      const risk_score = entry.riskScore || 0
+      const metadata = JSON.stringify(entry.metadata || {})
+      const initiated_by_user_id = entry.initiatedByUserId || null
+      const agent_chain = JSON.stringify(entry.agentChain || [])
+      const resolved_model = entry.resolvedModel || null
+      const ts = Date.now()
+
+      const payload = JSON.stringify({
+        id,
+        tenant_id,
+        user_id,
+        action,
+        context_hash,
+        prompt_hash,
+        response_hash,
+        risk_score,
+        metadata,
+        initiated_by_user_id,
+        agent_chain,
+        ...(hasResolvedModel ? { resolved_model } : {}),
+        ts,
+      })
+      const signingKey = process.env.AUDIT_HMAC_KEY
+      const row_hmac = signingKey
+        ? createHmac('sha256', Buffer.from(signingKey, 'hex'))
+          .update(payload)
+          .digest('hex')
+        : null
+
       const columns = [
         'id', 'tenant_id', 'user_id', 'action', 'context_hash', 'prompt_hash',
         'response_hash', 'risk_score', 'metadata', 'initiated_by_user_id',
-        'agent_chain', ...(hasResolvedModel ? ['resolved_model'] : []), 'ts',
+        'agent_chain', ...(hasResolvedModel ? ['resolved_model'] : []),
+        ...(hasHmacColumn ? ['row_hmac'] : []), 'ts',
       ]
       const values = [
-        nanoid(),
-        entry.tenantId,
-        entry.userId,
-        entry.action,
-        sha256(entry.context),
-        sha256(entry.prompt),
-        sha256(entry.response),
-        entry.riskScore || 0,
-        JSON.stringify(entry.metadata || {}),
-        entry.initiatedByUserId || null,
-        JSON.stringify(entry.agentChain || []),
-        ...(hasResolvedModel ? [entry.resolvedModel || null] : []),
-        Date.now()
+        id,
+        tenant_id,
+        user_id,
+        action,
+        context_hash,
+        prompt_hash,
+        response_hash,
+        risk_score,
+        metadata,
+        initiated_by_user_id,
+        agent_chain,
+        ...(hasResolvedModel ? [resolved_model] : []),
+        ...(hasHmacColumn ? [row_hmac] : []),
+        ts,
       ]
       await _db.query(`
         INSERT INTO audit_log (${columns.join(', ')})

@@ -5,6 +5,7 @@ import { resolve, dirname } from 'path'
 import { fileURLToPath } from 'url'
 import { nanoid } from 'nanoid'
 import { log, AUDIT_ACTIONS } from '../auditLogger.ts'
+import { verifyAuditRow } from '../verifyAuditRow.ts'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
 const migrationSql = readFileSync(
@@ -13,6 +14,14 @@ const migrationSql = readFileSync(
 )
 const migration002Sql = readFileSync(
   resolve(__dirname, '../../db/migrations/002_agent_ownership.sql'),
+  'utf8'
+)
+const migration013Sql = readFileSync(
+  resolve(__dirname, '../../db/migrations/013_model_selection.sql'),
+  'utf8'
+)
+const migration016Sql = readFileSync(
+  resolve(__dirname, '../../db/migrations/016_audit_hmac.sql'),
   'utf8'
 )
 
@@ -28,6 +37,8 @@ beforeAll(() => {
   db.pragma('foreign_keys = ON')
   db.exec(migrationSql)
   db.exec(migration002Sql)
+  db.exec(migration013Sql)
+  db.exec(migration016Sql)
 
   tenantId = nanoid()
   userId = nanoid()
@@ -42,6 +53,7 @@ beforeAll(() => {
 })
 
 afterAll(() => {
+  delete process.env.AUDIT_HMAC_KEY
   db.close()
 })
 
@@ -69,6 +81,42 @@ describe('auditLogger', () => {
     await tick()
     const row = db.prepare('SELECT context_hash FROM audit_log ORDER BY ts DESC LIMIT 1').get()
     expect(row.context_hash).toBeNull()
+  })
+
+  it('signs a row when AUDIT_HMAC_KEY is configured', async () => {
+    const signingKey = 'ab'.repeat(32)
+    process.env.AUDIT_HMAC_KEY = signingKey
+
+    log({
+      tenantId,
+      userId,
+      action: AUDIT_ACTIONS.CHAT_MESSAGE,
+      prompt: 'signed prompt',
+      response: 'signed response',
+      metadata: { source: 'test' },
+      resolvedModel: 'test-model',
+    }, db)
+    await tick()
+
+    const row = db.prepare(
+      'SELECT * FROM audit_log WHERE row_hmac IS NOT NULL ORDER BY ts DESC LIMIT 1'
+    ).get()
+    expect(row.row_hmac).toMatch(/^[0-9a-f]{64}$/)
+    expect(verifyAuditRow(row, signingKey)).toBe(true)
+    expect(verifyAuditRow({ ...row, action: 'tampered' }, signingKey)).toBe(false)
+
+    delete process.env.AUDIT_HMAC_KEY
+  })
+
+  it('leaves row_hmac null when AUDIT_HMAC_KEY is not configured', async () => {
+    delete process.env.AUDIT_HMAC_KEY
+
+    log({ tenantId, userId, action: AUDIT_ACTIONS.LOGIN }, db)
+    await tick()
+
+    const row = db.prepare('SELECT * FROM audit_log ORDER BY ts DESC LIMIT 1').get()
+    expect(row.row_hmac).toBeNull()
+    expect(verifyAuditRow(row, 'ab'.repeat(32))).toBe(false)
   })
 
   it('UPDATE on audit_log row throws a DB constraint error', async () => {

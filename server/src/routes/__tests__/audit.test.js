@@ -11,6 +11,7 @@ import { scopeToTenant } from '../../middleware/tenantScope.js'
 import { checkTrialExpiry } from '../../middleware/trialExpiry.js'
 import { seedFeatureFlags } from '../../billing/canAccess.js'
 import auditRoutes from '../audit.js'
+import { log } from '../../audit/auditLogger.ts'
 
 process.env.JWT_SECRET = 'test-jwt-secret-32-chars-minimum!!'
 process.env.JWT_EXPIRES_IN = '15m'
@@ -19,6 +20,18 @@ process.env.SELF_HOSTED = 'false'
 const __dirname = dirname(fileURLToPath(import.meta.url))
 const migrationSql = readFileSync(
   resolve(__dirname, '../../db/migrations/001_initial_schema.sql'),
+  'utf8'
+)
+const migration002Sql = readFileSync(
+  resolve(__dirname, '../../db/migrations/002_agent_ownership.sql'),
+  'utf8'
+)
+const migration013Sql = readFileSync(
+  resolve(__dirname, '../../db/migrations/013_model_selection.sql'),
+  'utf8'
+)
+const migration016Sql = readFileSync(
+  resolve(__dirname, '../../db/migrations/016_audit_hmac.sql'),
   'utf8'
 )
 
@@ -33,6 +46,9 @@ beforeAll(async () => {
   db = new Database(':memory:')
   db.pragma('foreign_keys = ON')
   db.exec(migrationSql)
+  db.exec(migration002Sql)
+  db.exec(migration013Sql)
+  db.exec(migration016Sql)
 
   const now = Date.now()
 
@@ -120,6 +136,7 @@ beforeAll(async () => {
 
 afterAll(async () => {
   process.env.SELF_HOSTED = 'false'
+  delete process.env.AUDIT_HMAC_KEY
   await app.close()
   db.close()
 })
@@ -250,5 +267,52 @@ describe('GET /audit/export', () => {
     expect(res.statusCode).toBe(200)
     expect(res.headers['content-type']).toContain('application/json')
     process.env.SELF_HOSTED = 'false'
+  })
+})
+
+describe('GET /audit/:id/verify', () => {
+  it('verifies a signed row', async () => {
+    process.env.AUDIT_HMAC_KEY = 'cd'.repeat(32)
+    log({
+      tenantId,
+      userId,
+      action: 'chat_message',
+      prompt: 'verify this row',
+      metadata: { source: 'route-test' },
+    }, db)
+    await new Promise(resolve => setTimeout(resolve, 50))
+
+    const row = db.prepare(
+      'SELECT id FROM audit_log WHERE row_hmac IS NOT NULL ORDER BY ts DESC LIMIT 1'
+    ).get()
+    const res = await req(`/audit/${row.id}/verify`, { token: tokenA })
+
+    expect(res.statusCode).toBe(200)
+    expect(JSON.parse(res.body)).toEqual({ id: row.id, verified: true })
+    delete process.env.AUDIT_HMAC_KEY
+  })
+
+  it('reports when HMAC signing is not configured', async () => {
+    delete process.env.AUDIT_HMAC_KEY
+    const row = db.prepare(
+      'SELECT id FROM audit_log WHERE tenant_id = ? ORDER BY ts DESC LIMIT 1'
+    ).get(tenantId)
+    const res = await req(`/audit/${row.id}/verify`, { token: tokenA })
+
+    expect(res.statusCode).toBe(200)
+    expect(JSON.parse(res.body)).toEqual({
+      id: row.id,
+      verified: null,
+      reason: 'hmac_not_configured',
+    })
+  })
+
+  it('does not expose another tenant audit row', async () => {
+    const row = db.prepare(
+      'SELECT id FROM audit_log WHERE tenant_id = ? LIMIT 1'
+    ).get(tenantId)
+    const res = await req(`/audit/${row.id}/verify`, { token: tokenB })
+
+    expect(res.statusCode).toBe(404)
   })
 })

@@ -3,6 +3,7 @@ import PDFDocument from 'pdfkit'
 import { format as stringify } from 'fast-csv'
 import { TIER_LIMITS } from '../../../shared/constants/tierLimits.js'
 import { canAccess } from '../billing/canAccess.ts'
+import { verifyAuditRow } from '../audit/verifyAuditRow.ts'
 
 function parseMetadata(value) {
   try {
@@ -165,5 +166,27 @@ export default async function auditRoutes(fastify) {
     reply.header('Content-Type', 'application/json')
     reply.header('Content-Disposition', 'attachment; filename="eudora-audit.json"')
     return reply.send(JSON.stringify(events, null, 2))
+  })
+
+  fastify.get('/:id/verify', async (request, reply) => {
+    const row = await db.get(
+      'SELECT * FROM audit_log WHERE id = ? AND tenant_id = ?',
+      [request.params.id, request.tenantId]
+    )
+    if (!row) return reply.code(404).send({ error: 'not_found' })
+
+    const signingKey = process.env.AUDIT_HMAC_KEY
+    if (!signingKey) {
+      return reply.send({
+        id: row.id,
+        verified: null,
+        reason: 'hmac_not_configured',
+      })
+    }
+
+    return reply.send({
+      id: row.id,
+      verified: verifyAuditRow(row, signingKey),
+    })
   })
 }
