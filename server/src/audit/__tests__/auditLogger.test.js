@@ -24,6 +24,10 @@ const migration016Sql = readFileSync(
   resolve(__dirname, '../../db/migrations/016_audit_hmac.sql'),
   'utf8'
 )
+const migration017Sql = readFileSync(
+  resolve(__dirname, '../../db/migrations/017_audit_explanation.sql'),
+  'utf8'
+)
 
 // Wait long enough for setImmediate + synchronous DB write to complete
 const tick = () => new Promise(r => setTimeout(r, 50))
@@ -39,6 +43,7 @@ beforeAll(() => {
   db.exec(migration002Sql)
   db.exec(migration013Sql)
   db.exec(migration016Sql)
+  db.exec(migration017Sql)
 
   tenantId = nanoid()
   userId = nanoid()
@@ -102,10 +107,24 @@ describe('auditLogger', () => {
       'SELECT * FROM audit_log WHERE row_hmac IS NOT NULL ORDER BY ts DESC LIMIT 1'
     ).get()
     expect(row.row_hmac).toMatch(/^[0-9a-f]{64}$/)
+    expect(row.explanation_code).toBe('allowed')
     expect(verifyAuditRow(row, signingKey)).toBe(true)
     expect(verifyAuditRow({ ...row, action: 'tampered' }, signingKey)).toBe(false)
 
     delete process.env.AUDIT_HMAC_KEY
+  })
+
+  it('stores the derived explanation code', async () => {
+    log({
+      tenantId,
+      userId,
+      action: AUDIT_ACTIONS.CHAT_MESSAGE,
+      metadata: { piiDetected: true },
+    }, db)
+    await tick()
+
+    const row = db.prepare('SELECT explanation_code FROM audit_log ORDER BY ts DESC LIMIT 1').get()
+    expect(row.explanation_code).toBe('pii_detected')
   })
 
   it('leaves row_hmac null when AUDIT_HMAC_KEY is not configured', async () => {

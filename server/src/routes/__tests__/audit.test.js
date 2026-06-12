@@ -34,6 +34,10 @@ const migration016Sql = readFileSync(
   resolve(__dirname, '../../db/migrations/016_audit_hmac.sql'),
   'utf8'
 )
+const migration017Sql = readFileSync(
+  resolve(__dirname, '../../db/migrations/017_audit_explanation.sql'),
+  'utf8'
+)
 
 let app, db
 let tenantId, userId, tokenA
@@ -49,6 +53,7 @@ beforeAll(async () => {
   db.exec(migration002Sql)
   db.exec(migration013Sql)
   db.exec(migration016Sql)
+  db.exec(migration017Sql)
 
   const now = Date.now()
 
@@ -159,6 +164,7 @@ describe('GET /audit', () => {
     expect(body.total).toBe(5)
     expect(body.events).toHaveLength(5)
     expect(body.page).toBe(1)
+    expect(body.events.every(event => event.explanation_code === 'allowed')).toBe(true)
   })
 
   it('filters by action=guard_block → 1 event', async () => {

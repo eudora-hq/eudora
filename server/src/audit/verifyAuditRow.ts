@@ -18,6 +18,9 @@ export function verifyAuditRow(row: Record<string, any>, signingKey: string): bo
     ...(Object.prototype.hasOwnProperty.call(row, 'resolved_model')
       ? { resolved_model: row.resolved_model }
       : {}),
+    ...(row.explanation_code != null
+      ? { explanation_code: row.explanation_code }
+      : {}),
     ts: row.ts,
   })
 

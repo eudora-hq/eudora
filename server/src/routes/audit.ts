@@ -61,7 +61,9 @@ export default async function auditRoutes(fastify) {
     , params).count
 
     const events = await db.all(
-      `SELECT id, action, risk_score, metadata, ts FROM audit_log
+      `SELECT id, action, risk_score, metadata,
+              COALESCE(explanation_code, 'allowed') AS explanation_code, ts
+       FROM audit_log
        WHERE ${where}
        ORDER BY ts DESC
        LIMIT ? OFFSET ?`

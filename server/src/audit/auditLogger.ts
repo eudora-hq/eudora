@@ -3,6 +3,7 @@ import { createHmac } from 'node:crypto'
 import { nanoid } from 'nanoid'
 import getDb from '../db/client.ts'
 import { adaptDatabase } from '../db/index.ts'
+import { deriveExplanationCode } from './explanationCodes.ts'
 
 export const AUDIT_ACTIONS = {
   CHAT_MESSAGE:       'chat_message',
@@ -32,6 +33,8 @@ export function log(entry: any, db?: any) {
         .some(column => column.name === 'resolved_model')
       const hasHmacColumn = auditColumns
         .some(column => column.name === 'row_hmac')
+      const hasExplanationColumn = auditColumns
+        .some(column => column.name === 'explanation_code')
       const id = nanoid()
       const tenant_id = entry.tenantId
       const user_id = entry.userId
@@ -40,10 +43,12 @@ export function log(entry: any, db?: any) {
       const prompt_hash = sha256(entry.prompt)
       const response_hash = sha256(entry.response)
       const risk_score = entry.riskScore || 0
-      const metadata = JSON.stringify(entry.metadata || {})
+      const metadataValue = entry.metadata || {}
+      const metadata = JSON.stringify(metadataValue)
       const initiated_by_user_id = entry.initiatedByUserId || null
       const agent_chain = JSON.stringify(entry.agentChain || [])
       const resolved_model = entry.resolvedModel || null
+      const explanation_code = deriveExplanationCode(action, metadataValue)
       const ts = Date.now()
 
       const payload = JSON.stringify({
@@ -59,6 +64,7 @@ export function log(entry: any, db?: any) {
         initiated_by_user_id,
         agent_chain,
         ...(hasResolvedModel ? { resolved_model } : {}),
+        ...(hasExplanationColumn ? { explanation_code } : {}),
         ts,
       })
       const signingKey = process.env.AUDIT_HMAC_KEY
@@ -72,6 +78,7 @@ export function log(entry: any, db?: any) {
         'id', 'tenant_id', 'user_id', 'action', 'context_hash', 'prompt_hash',
         'response_hash', 'risk_score', 'metadata', 'initiated_by_user_id',
         'agent_chain', ...(hasResolvedModel ? ['resolved_model'] : []),
+        ...(hasExplanationColumn ? ['explanation_code'] : []),
         ...(hasHmacColumn ? ['row_hmac'] : []), 'ts',
       ]
       const values = [
@@ -87,6 +94,7 @@ export function log(entry: any, db?: any) {
         initiated_by_user_id,
         agent_chain,
         ...(hasResolvedModel ? [resolved_model] : []),
+        ...(hasExplanationColumn ? [explanation_code] : []),
         ...(hasHmacColumn ? [row_hmac] : []),
         ts,
       ]
