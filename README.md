@@ -111,28 +111,18 @@ client = OpenAI(base_url="https://api.geteudora.com/proxy/openai/v1", api_key="e
 
 ## Architecture
 
-```
-Your application or agent
-         |
-         v
-   Eudora Proxy
-         |
-   +-----+-----+
-   |           |
-DLP scan   Injection detection
-   |           |
-   +-----+-----+
-         |
-   Intent classification
-         |
-   Context retrieval
-         |
-   Risk scoring (0-100)
-         |
-   Audit log + trace
-         |
-         v
-OpenAI / Anthropic / Azure OpenAI / Ollama
+```mermaid
+sequenceDiagram
+    participant Agent
+    participant Eudora
+    participant Model
+
+    Agent->>Eudora: LLM request
+    Eudora->>Eudora: DLP scan · injection detection · risk score
+    Eudora->>Model: Forward if allowed
+    Model-->>Eudora: Model response
+    Eudora->>Eudora: Response scan · HMAC sign · RFC 3161 timestamp
+    Eudora-->>Agent: Response + audit trace
 ```
 
 The pipeline runs on every request before it reaches the model. If the request is blocked, it never leaves Eudora.
